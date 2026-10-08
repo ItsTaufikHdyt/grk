@@ -1,0 +1,1163 @@
+<script>
+  google.charts.load("current", {
+    packages: ["corechart"],
+  });
+
+  let app = {
+    years: [],
+    sectors: [],
+    year: null,
+    page: "trend",
+    summary: null,
+    allSectorTrend: null,
+    category: null,
+    categoryTrend: null,
+    forestry: null,
+    national: null,
+    currentUser: JSON.parse(sessionStorage.getItem("grk_user") || "null"),
+    masterForm: { sektorList: [], subsektorList: [] },
+    activeSubsektors: []
+  };
+
+  google.charts.setOnLoadCallback(init);
+
+  /* =========================
+     INISIALISASI APLIKASI
+  ========================= */
+  function init() {
+    showLoading();
+
+    google.script.run
+      .withSuccessHandler((data) => {
+        app.years = data.years;
+        app.sectors = data.sectors;
+        app.year = data.latestYear;
+
+        setupFilters();
+        updateHeroYearFilter();
+        loadTrendPage();
+        checkAuthSession();
+        loadMasterFormData();
+      })
+      .withFailureHandler(handleError)
+      .getInitialData();
+  }
+
+  function loadMasterFormData() {
+    google.script.run
+      .withSuccessHandler((res) => {
+        app.masterForm = res;
+        populateSektorOptions();
+      })
+      .getMasterFormData();
+  }
+
+  /* =========================
+     AUTENTIKASI & SESI LOGIN
+  ========================= */
+  function checkAuthSession() {
+    const navInput = document.getElementById("nav-input");
+    const authBtnText = document.getElementById("authBtnText");
+
+    if (app.currentUser) {
+      if (navInput) navInput.style.display = "flex";
+      if (authBtnText) {
+        authBtnText.textContent = `Logout (${app.currentUser.nama || app.currentUser.username})`;
+      }
+    } else {
+      if (navInput) navInput.style.display = "none";
+      if (authBtnText) authBtnText.textContent = "Login";
+      if (app.page === "input") {
+        openPage("trend", document.querySelector('[data-page="trend"]'));
+      }
+    }
+  }
+
+  function handleAuthClick() {
+    if (app.currentUser) {
+      if (confirm("Keluar dari sesi login operator?")) {
+        sessionStorage.removeItem("grk_user");
+        app.currentUser = null;
+        checkAuthSession();
+        openPage("trend", document.querySelector('[data-page="trend"]'));
+      }
+    } else {
+      openLoginModal();
+    }
+  }
+
+  function openLoginModal() {
+    document.getElementById("loginModal").style.display = "flex";
+    document.getElementById("loginError").style.display = "none";
+    document.getElementById("loginUsername").focus();
+  }
+
+  function closeLoginModal() {
+    document.getElementById("loginModal").style.display = "none";
+  }
+
+  function handleLoginSubmit(e) {
+    e.preventDefault();
+    const u = document.getElementById("loginUsername").value;
+    const p = document.getElementById("loginPassword").value;
+    const btn = document.getElementById("btnLoginSubmit");
+    const errBox = document.getElementById("loginError");
+
+    btn.disabled = true;
+    btn.textContent = "Memverifikasi...";
+    errBox.style.display = "none";
+
+    google.script.run
+      .withSuccessHandler((res) => {
+        btn.disabled = false;
+        btn.textContent = "Masuk";
+        if (res.success) {
+          app.currentUser = res.user;
+          sessionStorage.setItem("grk_user", JSON.stringify(res.user));
+          closeLoginModal();
+          checkAuthSession();
+          openPage("input", document.getElementById("nav-input"));
+        } else {
+          errBox.textContent = res.message;
+          errBox.style.display = "block";
+        }
+      })
+      .withFailureHandler((err) => {
+        btn.disabled = false;
+        btn.textContent = "Masuk";
+        errBox.textContent = "Terjadi kendala: " + (err.message || err);
+        errBox.style.display = "block";
+      })
+      .verifyLogin(u, p);
+  }
+
+  /* =========================
+     FORM INPUT & SEARCH SUBSEKTOR
+  ========================= */
+  function onTargetTabelChange() {
+    const target = document.getElementById("inputTarget").value;
+    const groupSubsektor = document.getElementById("groupSubsektor");
+    const labelNilai = document.getElementById("labelNilai");
+    const helpText = document.getElementById("nilaiHelpText");
+
+    populateSektorOptions();
+
+    if (target === "DATA_SUBSEKTOR") {
+      groupSubsektor.style.display = "block";
+      updateAvailableSubsektors();
+    } else {
+      groupSubsektor.style.display = "none";
+      clearSubsektorSelection();
+    }
+
+    if (target === "DATA_NASIONAL") {
+      labelNilai.textContent = "Nilai Emisi (kt CO₂e)";
+      helpText.textContent = "Satuan emisi nasional dalam kiloton (kt CO₂e).";
+    } else {
+      labelNilai.textContent = "Nilai Emisi (Gg CO₂e)";
+      helpText.textContent = "Gunakan nilai negatif untuk serapan/removal (misal: Sektor Kehutanan).";
+    }
+  }
+
+  function populateSektorOptions() {
+    const target = document.getElementById("inputTarget").value;
+    const sektorSelect = document.getElementById("inputSektor");
+    if (!sektorSelect || !app.masterForm.sektorList) return;
+
+    sektorSelect.innerHTML = "";
+
+    const filteredSektor = app.masterForm.sektorList.filter((s) => {
+      if (target === "DATA_NASIONAL") return s.kode !== "KEHUTANAN";
+      return s.kode !== "FOLU";
+    });
+
+    filteredSektor.forEach((s) => {
+      const opt = document.createElement("option");
+      opt.value = s.kode;
+      opt.dataset.sektorId = s.sektorId;
+      opt.textContent = `${s.kode} — ${s.nama}`;
+      sektorSelect.appendChild(opt);
+    });
+
+    if (target === "DATA_SUBSEKTOR") {
+      updateAvailableSubsektors();
+    }
+  }
+
+  function onSektorChange() {
+    const target = document.getElementById("inputTarget").value;
+    if (target === "DATA_SUBSEKTOR") {
+      updateAvailableSubsektors();
+    }
+  }
+
+  function updateAvailableSubsektors() {
+    const sektor = document.getElementById("inputSektor").value;
+    clearSubsektorSelection();
+    app.activeSubsektors = app.masterForm.subsektorList.filter(
+      (k) => k.sektor === sektor
+    );
+    renderSubsektorOptions(app.activeSubsektors);
+  }
+
+  function renderSubsektorOptions(items) {
+    const container = document.getElementById("subsektorOptionsList");
+    container.innerHTML = "";
+
+    if (items.length === 0) {
+      container.innerHTML = '<div class="search-option-empty">Tidak ada subsektor untuk sektor ini</div>';
+      return;
+    }
+
+    items.forEach((item) => {
+      const div = document.createElement("div");
+      div.className = "search-option-item";
+      div.textContent = `${item.subsektorId} — ${item.nama}`;
+      div.onclick = () => selectSubsektor(item);
+      container.appendChild(div);
+    });
+  }
+
+  function filterSubsektorOptions() {
+    const query = document.getElementById("subsektorSearchInput").value.toLowerCase();
+    const filtered = app.activeSubsektors.filter(
+      (s) => s.nama.toLowerCase().includes(query) || s.subsektorId.toLowerCase().includes(query)
+    );
+    renderSubsektorOptions(filtered);
+    openSubsektorDropdown();
+  }
+
+  function openSubsektorDropdown() {
+    document.getElementById("subsektorOptionsList").style.display = "block";
+  }
+
+  function selectSubsektor(item) {
+    document.getElementById("subsektorSearchInput").value = `${item.subsektorId} — ${item.nama}`;
+    document.getElementById("selectedSubsektorId").value = item.subsektorId;
+    document.getElementById("selectedSubsektorName").value = item.nama;
+    document.getElementById("subsektorOptionsList").style.display = "none";
+  }
+
+  function clearSubsektorSelection() {
+    document.getElementById("subsektorSearchInput").value = "";
+    document.getElementById("selectedSubsektorId").value = "";
+    document.getElementById("selectedSubsektorName").value = "";
+  }
+
+  document.addEventListener("click", (e) => {
+    const wrapper = document.querySelector(".searchable-select-wrapper");
+    if (wrapper && !wrapper.contains(e.target)) {
+      const list = document.getElementById("subsektorOptionsList");
+      if (list) list.style.display = "none";
+    }
+  });
+
+  function handleFormSubmit(e) {
+    e.preventDefault();
+    if (!app.currentUser) {
+      alert("Silakan login terlebih dahulu.");
+      openLoginModal();
+      return;
+    }
+
+    const targetTabel = document.getElementById("inputTarget").value;
+    const sektorSelect = document.getElementById("inputSektor");
+    const selectedSektorOpt = sektorSelect.options[sektorSelect.selectedIndex];
+
+    const payload = {
+      targetTabel: targetTabel,
+      tahun: document.getElementById("inputTahun").value,
+      sektor: selectedSektorOpt.value,
+      sektorId: selectedSektorOpt.dataset.sektorId,
+      nilai: document.getElementById("inputNilai").value,
+    };
+
+    if (targetTabel === "DATA_SUBSEKTOR") {
+      const subId = document.getElementById("selectedSubsektorId").value;
+      const subName = document.getElementById("selectedSubsektorName").value;
+
+      if (!subId || !subName) {
+        alert("Pilih subsektor dari daftar pencarian.");
+        document.getElementById("subsektorSearchInput").focus();
+        return;
+      }
+
+      payload.subsektorId = subId;
+      payload.subsektor = subName;
+    }
+
+    const btn = document.getElementById("btnSubmitForm");
+    btn.disabled = true;
+    btn.textContent = "Menyimpan...";
+
+    google.script.run
+      .withSuccessHandler((res) => {
+        btn.disabled = false;
+        btn.textContent = "Simpan Data";
+        alert(res.message);
+        document.getElementById("inputNilai").value = "";
+        if (targetTabel === "DATA_SUBSEKTOR") {
+          clearSubsektorSelection();
+        }
+      })
+      .withFailureHandler((err) => {
+        btn.disabled = false;
+        btn.textContent = "Simpan Data";
+        handleError(err);
+      })
+      .saveEmissionData(payload, app.currentUser);
+  }
+
+  /* =========================
+     FILTER & NAVIGASI
+  ========================= */
+  function setupFilters() {
+    populateSelect("globalYear", app.years, app.year);
+    populateSelect("categoryYear", app.years, app.year);
+    populateSelect("categorySector", app.sectors, app.sectors[0]);
+
+    const yearsAscending = [...app.years].sort((a, b) => a - b);
+    populateSelect("trendStartYear", yearsAscending, yearsAscending[0]);
+    populateSelect(
+      "trendEndYear",
+      yearsAscending,
+      yearsAscending[yearsAscending.length - 1]
+    );
+  }
+
+  function populateSelect(id, values, selected) {
+    const element = document.getElementById(id);
+    if (!element) return;
+    element.innerHTML = "";
+
+    values.forEach((value) => {
+      const option = document.createElement("option");
+      option.value = value;
+      option.textContent = value;
+      option.selected = String(value) === String(selected);
+      element.appendChild(option);
+    });
+  }
+
+  function openPage(page, button) {
+    app.page = page;
+
+    document.querySelectorAll(".page").forEach((element) => {
+      element.classList.remove("active");
+    });
+
+    const targetPage = document.getElementById("page-" + page);
+    if (targetPage) {
+      targetPage.classList.add("active");
+    }
+
+    document.querySelectorAll(".nav-item").forEach((element) => {
+      element.classList.remove("active");
+    });
+
+    if (button) {
+      button.classList.add("active");
+    }
+
+    updateHeroYearFilter();
+
+    switch (page) {
+      case "summary":
+        loadSummary();
+        break;
+      case "trend":
+        loadTrendPage();
+        break;
+      case "national":
+        loadNationalPage();
+        break;
+      case "sector":
+        document.getElementById("categoryYear").value = app.year;
+        loadCategoryPage();
+        break;
+      case "forestry":
+        loadForestryPage();
+        break;
+    }
+  }
+
+  function globalYearChanged() {
+    app.year = Number(document.getElementById("globalYear").value);
+    document.getElementById("categoryYear").value = app.year;
+
+    if (app.page === "summary") loadSummary();
+    if (app.page === "sector") loadCategoryPage();
+    if (app.page === "forestry") loadForestryPage();
+  }
+
+  /* =========================
+     HALAMAN: SUMMARY
+  ========================= */
+  function loadSummary() {
+    showLoading();
+
+    google.script.run
+      .withSuccessHandler((data) => {
+        app.summary = data;
+        renderSummary(data);
+        hideLoading();
+      })
+      .withFailureHandler(handleError)
+      .getSummaryData(app.year);
+  }
+
+  function renderSummary(data) {
+    text("summaryTotal", formatNumber(data.total));
+    text("summarySectorCount", data.sectorCount);
+
+    if (data.largestSector) {
+      text("summaryLargest", data.largestSector.sektor);
+      text("summaryLargestValue", formatNumber(data.largestSector.nilai) + " Gg CO₂e");
+
+      const percent = data.total !== 0 ? (data.largestSector.nilai / data.total) * 100 : 0;
+      text("summaryLargestPercent", formatPercent(percent) + " dari total");
+    }
+
+    renderChange(data);
+    renderSummaryBar(data);
+    renderSectorList(data);
+    renderSummaryTrend(data);
+    renderSummaryInsights(data);
+  }
+
+  function renderChange(data) {
+    const change = data.changePercent;
+    if (change === null) {
+      text("summaryChangeValue", "-");
+      text("summaryChange", "Belum ada tahun pembanding");
+      return;
+    }
+
+    const abs = Math.abs(change);
+    const value = (change > 0 ? "+" : "-") + formatPercent(abs);
+    text("summaryChangeValue", value);
+
+    const element = document.getElementById("summaryChangeValue");
+    element.className = "kpi-value " + (change > 0 ? "up" : "down");
+
+    document.getElementById("summaryChange").innerHTML =
+      change > 0
+        ? '<span class="up">▲ meningkat</span> dibanding ' + data.previousYear
+        : '<span class="down">▼ menurun</span> dibanding ' + data.previousYear;
+  }
+
+  function renderSummaryBar(data) {
+    text("summaryBarSubtitle", "Tahun " + data.year + " • Gg CO₂e");
+    const table = new google.visualization.DataTable();
+    table.addColumn("string", "Sektor");
+    table.addColumn("number", "Emisi");
+
+    data.sectors.forEach((item) => {
+      table.addRow([item.sektor, item.nilai]);
+    });
+
+    const chart = new google.visualization.BarChart(document.getElementById("summaryBarChart"));
+    chart.draw(table, barOptions());
+  }
+
+  function renderSectorList(data) {
+    const container = document.getElementById("summarySectorList");
+    container.innerHTML = data.sectors
+      .map((item) => {
+        let meta = "";
+        if (item.nilai < 0) {
+          meta = "Serapan / removal";
+        } else {
+          const percent = data.total !== 0 ? (item.nilai / data.total) * 100 : 0;
+          meta = formatPercent(percent) + " dari total";
+        }
+
+        return `
+          <div class="sector-item">
+            <div class="sector-name">${escapeHtml(item.sektor)}</div>
+            <div class="sector-value">${formatNumber(item.nilai)}</div>
+            <div class="sector-meta">${meta}</div>
+          </div>
+        `;
+      })
+      .join("");
+  }
+
+  function renderSummaryTrend(data) {
+    const table = new google.visualization.DataTable();
+    table.addColumn("number", "Tahun");
+    table.addColumn("number", "Total Emisi");
+
+    data.totalTrend.forEach((item) => {
+      table.addRow([item.tahun, item.nilai]);
+    });
+
+    const chart = new google.visualization.LineChart(document.getElementById("summaryTrendChart"));
+    chart.draw(table, lineOptions("Total Emisi"));
+  }
+
+  function renderSummaryInsights(data) {
+    const insights = [];
+
+    if (data.largestSector) {
+      const percent = data.total !== 0 ? (data.largestSector.nilai / data.total) * 100 : 0;
+      insights.push(`
+        <strong>${escapeHtml(data.largestSector.sektor)}</strong> merupakan sektor dengan emisi terbesar pada tahun ${data.year}, yaitu <strong>${formatNumber(data.largestSector.nilai)} Gg CO₂e</strong> (${formatPercent(percent)}).
+      `);
+    }
+
+    if (data.changePercent !== null) {
+      insights.push(`
+        Total emisi <strong>${data.changePercent > 0 ? "meningkat" : "menurun"}</strong> sebesar <strong>${formatPercent(Math.abs(data.changePercent))}</strong> dibanding tahun ${data.previousYear}.
+      `);
+    }
+
+    const forestry = data.sectors.find((item) => item.sektor.toUpperCase() === "KEHUTANAN");
+    if (forestry && forestry.nilai < 0) {
+      insights.push(`
+        Sektor <strong>Kehutanan</strong> mencatat <strong>${formatNumber(forestry.nilai)} Gg CO₂e</strong>, yang menunjukkan serapan/removal GRK.
+      `);
+    }
+
+    document.getElementById("summaryInsights").innerHTML = insights
+      .map((item) => `<div class="insight">${item}</div>`)
+      .join("");
+  }
+
+  /* =========================
+     HALAMAN: TREND SELURUH SEKTOR
+  ========================= */
+  function loadTrendPage() {
+    showLoading();
+
+    google.script.run
+      .withSuccessHandler((data) => {
+        app.allSectorTrend = data;
+        renderAllSectorTrend();
+        hideLoading();
+      })
+      .withFailureHandler(handleError)
+      .getAllSectorTrend();
+  }
+
+  function renderAllSectorTrend() {
+    const source = app.allSectorTrend;
+    if (!source) return;
+
+    const startElement = document.getElementById("trendStartYear");
+    const endElement = document.getElementById("trendEndYear");
+    if (!startElement || !endElement) return;
+
+    let startYear = Number(startElement.value);
+    let endYear = Number(endElement.value);
+
+    if (startYear > endYear) {
+      const temp = startYear;
+      startYear = endYear;
+      endYear = temp;
+    }
+
+    const filteredData = source.data.filter(
+      (item) => item.tahun >= startYear && item.tahun <= endYear
+    );
+
+    renderAllSectorChart(source.sectors, filteredData);
+    renderAllSectorTable(source.sectors, filteredData);
+  }
+
+  function renderAllSectorChart(sectors, data) {
+    const table = new google.visualization.DataTable();
+    table.addColumn("string", "Tahun");
+
+    sectors.forEach((sector) => {
+      table.addColumn("number", formatSectorName(sector));
+    });
+
+    table.addColumn("number", "Total Emisi GRK");
+
+    data.forEach((item) => {
+      const row = [String(item.tahun)];
+      sectors.forEach((sector) => {
+        row.push(item.values[sector] ?? 0);
+      });
+      row.push(item.total);
+      table.addRow(row);
+    });
+
+    const chart = new google.visualization.ComboChart(
+      document.getElementById("allSectorTrendChart")
+    );
+
+    const totalSeriesIndex = sectors.length;
+    const series = {};
+
+    sectors.forEach((_, index) => {
+      series[index] = { type: "bars" };
+    });
+
+    series[totalSeriesIndex] = {
+      type: "line",
+      targetAxisIndex: 0,
+      lineWidth: 4,
+      pointSize: 7,
+    };
+
+    const options = {
+      backgroundColor: "transparent",
+      height: 500,
+      fontName: "Arial",
+      chartArea: {
+        left: 90,
+        top: 50,
+        right: 35,
+        bottom: 100,
+        width: "86%",
+        height: "72%",
+      },
+      isStacked: false,
+      seriesType: "bars",
+      series,
+      bar: { groupWidth: "72%" },
+      legend: {
+        position: "bottom",
+        alignment: "center",
+        maxLines: 3,
+        textStyle: { fontSize: 11, color: "#526174" },
+      },
+      hAxis: {
+        title: "Tahun",
+        textStyle: { fontSize: 10, color: "#64748b" },
+        titleTextStyle: { color: "#64748b", fontSize: 11 },
+        gridlines: { color: "transparent" },
+      },
+      vAxis: {
+        title: "Emisi GRK (Gg CO₂e)",
+        baseline: 0,
+        baselineColor: "#94a3b8",
+        gridlines: { color: "#e8edf3" },
+        minorGridlines: { color: "transparent" },
+        textStyle: { color: "#64748b", fontSize: 10 },
+        titleTextStyle: { color: "#526174", fontSize: 11 },
+        format: "#,##0",
+      },
+      tooltip: { textStyle: { fontSize: 12 } },
+      focusTarget: "category",
+    };
+
+    chart.draw(table, options);
+  }
+
+  function renderAllSectorTable(sectors, data) {
+    const head = document.getElementById("allSectorTableHead");
+    const body = document.getElementById("allSectorTableBody");
+
+    head.innerHTML = `
+      <tr>
+        <th class="matrix-sector">ITEM</th>
+        ${data.map((item) => `<th class="matrix-year">${item.tahun}</th>`).join("")}
+      </tr>
+    `;
+
+    const sectorRows = sectors
+      .map((sector) => `
+        <tr>
+          <td class="matrix-sector matrix-sector-name">${escapeHtml(formatSectorName(sector))}</td>
+          ${data.map((item) => `
+            <td class="matrix-value ${(item.values[sector] ?? 0) < 0 ? "negative" : ""}">
+              ${formatNumber(item.values[sector] ?? 0)}
+            </td>
+          `).join("")}
+        </tr>
+      `)
+      .join("");
+
+    const totalRow = `
+      <tr class="matrix-total">
+        <td class="matrix-sector">TOTAL EMISI GRK</td>
+        ${data.map((item) => `<td class="matrix-value">${formatNumber(item.total)}</td>`).join("")}
+      </tr>
+    `;
+
+    body.innerHTML = sectorRows + totalRow;
+  }
+
+  /* =========================
+     HALAMAN: NASIONAL
+  ========================= */
+  function loadNationalPage() {
+    if (app.national) {
+      renderNationalPage();
+      return;
+    }
+
+    showLoading();
+
+    google.script.run
+      .withSuccessHandler((data) => {
+        app.national = data;
+        setupNationalFilters(data);
+        renderNationalPage();
+        hideLoading();
+      })
+      .withFailureHandler(handleError)
+      .getNationalEmissionData();
+  }
+
+  function setupNationalFilters(data) {
+    const years = [...data.years].sort((a, b) => a - b);
+    populateSelect("nationalStartYear", years, years[0]);
+    populateSelect("nationalEndYear", years, years[years.length - 1]);
+  }
+
+  function renderNationalPage() {
+    const data = app.national;
+    if (!data) return;
+
+    const startYear = Number(document.getElementById("nationalStartYear").value);
+    const endYear = Number(document.getElementById("nationalEndYear").value);
+
+    const filtered = data.data.filter(
+      (item) => item.tahun >= startYear && item.tahun <= endYear
+    );
+
+    renderNationalKpi(data);
+    renderNationalChart(data.sectors, filtered);
+    renderNationalTable(data.sectors, filtered);
+  }
+
+  function renderNationalKpi(data) {
+    text("nationalTotal", formatNumber(data.latestTotal));
+    text("nationalYear", "Tahun " + data.latestYear);
+    text("nationalSectorCount", data.sectors.length);
+
+    if (data.largestSector) {
+      text("nationalLargestSector", formatSectorName(data.largestSector.sektor));
+      text("nationalLargestValue", formatNumber(data.largestSector.nilai) + " kt CO₂e");
+    }
+
+    if (data.changePercent === null) {
+      text("nationalChange", "-");
+      text("nationalChangeYear", "-");
+      return;
+    }
+
+    const change = data.changePercent;
+    const element = document.getElementById("nationalChange");
+    element.textContent = (change >= 0 ? "+" : "-") + formatPercent(Math.abs(change));
+    element.className = "kpi-value " + (change > 0 ? "up" : "down");
+    text("nationalChangeYear", "dibanding " + data.previousYear);
+  }
+
+  function renderNationalChart(sectors, data) {
+    const table = new google.visualization.DataTable();
+    table.addColumn("string", "Tahun");
+
+    sectors.forEach((sector) => {
+      table.addColumn("number", formatSectorName(sector));
+    });
+
+    table.addColumn("number", "Total");
+
+    data.forEach((item) => {
+      const row = [String(item.tahun)];
+      sectors.forEach((sector) => {
+        row.push(item.values[sector] ?? 0);
+      });
+      row.push(item.total);
+      table.addRow(row);
+    });
+
+    const series = {};
+    sectors.forEach((_, index) => {
+      series[index] = { type: "bars" };
+    });
+
+    series[sectors.length] = {
+      type: "line",
+      lineWidth: 4,
+      pointSize: 6,
+    };
+
+    const chart = new google.visualization.ComboChart(
+      document.getElementById("nationalEmissionChart")
+    );
+
+    chart.draw(table, {
+      backgroundColor: "transparent",
+      seriesType: "bars",
+      isStacked: true,
+      series,
+      chartArea: {
+        left: 100,
+        top: 45,
+        right: 35,
+        bottom: 100,
+        width: "86%",
+        height: "72%",
+      },
+      legend: {
+        position: "bottom",
+        alignment: "center",
+        maxLines: 3,
+        textStyle: { fontSize: 11 },
+      },
+      hAxis: {
+        title: "Tahun",
+        slantedText: true,
+        slantedTextAngle: 90,
+        textStyle: { fontSize: 10 },
+        gridlines: { color: "transparent" },
+      },
+      vAxis: {
+        title: "Emisi GRK (kt CO₂e)",
+        baseline: 0,
+        baselineColor: "#94a3b8",
+        gridlines: { color: "#e7ebf0" },
+        textStyle: { fontSize: 10 },
+        format: "#,##0",
+      },
+      bar: { groupWidth: "65%" },
+      focusTarget: "category",
+    });
+  }
+
+  function renderNationalTable(sectors, data) {
+    const head = document.getElementById("nationalTableHead");
+    const body = document.getElementById("nationalTableBody");
+
+    head.innerHTML = `
+      <tr>
+        <th>Tahun</th>
+        ${sectors.map((sector) => `<th>${escapeHtml(formatSectorName(sector))}</th>`).join("")}
+        <th>TOTAL</th>
+      </tr>
+    `;
+
+    body.innerHTML = data
+      .map((item) => `
+        <tr>
+          <td class="year-cell">${item.tahun}</td>
+          ${sectors.map((sector) => `<td class="number">${formatNumber(item.values[sector] ?? 0)}</td>`).join("")}
+          <td class="number national-total-cell">${formatNumber(item.total)}</td>
+        </tr>
+      `)
+      .join("");
+  }
+
+  /* =========================
+     HALAMAN: ANALISIS SUBSEKTOR
+  ========================= */
+  function loadCategoryPage() {
+    const year = Number(document.getElementById("categoryYear").value);
+    const sector = document.getElementById("categorySector").value;
+
+    showLoading();
+
+    let categoryData = null;
+    let trendData = null;
+    let completed = 0;
+
+    function finish() {
+      completed++;
+      if (completed < 2) return;
+      app.category = categoryData;
+      app.categoryTrend = trendData;
+      renderCategory(categoryData, trendData);
+      hideLoading();
+    }
+
+    google.script.run
+      .withSuccessHandler((data) => {
+        categoryData = data;
+        finish();
+      })
+      .withFailureHandler(handleError)
+      .getCategoryData(year, sector);
+
+    google.script.run
+      .withSuccessHandler((data) => {
+        trendData = data;
+        finish();
+      })
+      .withFailureHandler(handleError)
+      .getCategoryTrend(sector);
+  }
+
+  function renderCategory(data, trend) {
+    text("categoryTotal", formatNumber(data.total));
+    text("categoryCount", data.categoryCount);
+
+    if (data.largestCategory) {
+      text("largestCategory", data.largestCategory.kategori);
+      text("largestCategoryValue", formatNumber(data.largestCategory.nilai) + " Gg CO₂e");
+    }
+
+    text("categoryBarTitle", "Subsektor " + data.sector + " — " + data.year);
+
+    renderCategoryBar(data);
+    renderCategoryTrend(trend);
+    renderCategoryTable(data);
+  }
+
+  function renderCategoryBar(data) {
+    const table = new google.visualization.DataTable();
+    table.addColumn("string", "Subsektor");
+    table.addColumn("number", "Emisi");
+
+    data.categories.forEach((item) => {
+      table.addRow([item.kategori, item.nilai]);
+    });
+
+    const chart = new google.visualization.BarChart(document.getElementById("categoryBarChart"));
+    chart.draw(table, barOptions());
+  }
+
+  function renderCategoryTrend(trend) {
+    text("categoryTrendTitle", "Tren Subsektor " + trend.sector);
+
+    const table = new google.visualization.DataTable();
+    table.addColumn("number", "Tahun");
+
+    trend.categories.forEach((category) => {
+      table.addColumn("number", category);
+    });
+
+    trend.data.forEach((item) => {
+      const row = [item.tahun];
+      trend.categories.forEach((category) => {
+        row.push(item.values[category] ?? null);
+      });
+      table.addRow(row);
+    });
+
+    const chart = new google.visualization.LineChart(document.getElementById("categoryTrendChart"));
+    chart.draw(table, lineOptions());
+  }
+
+  function renderCategoryTable(data) {
+    document.getElementById("categoryTable").innerHTML = data.categories
+      .map((item) => {
+        const percent = data.total !== 0 ? (item.nilai / data.total) * 100 : 0;
+        return `
+          <tr>
+            <td>${escapeHtml(item.kategori)}</td>
+            <td class="number">${formatNumber(item.nilai)} Gg CO₂e</td>
+            <td>${item.nilai < 0 ? "Removal" : formatPercent(percent)}</td>
+          </tr>
+        `;
+      })
+      .join("");
+  }
+
+  /* =========================
+     HALAMAN: KEHUTANAN
+  ========================= */
+  function loadForestryPage() {
+    showLoading();
+
+    google.script.run
+      .withSuccessHandler((data) => {
+        app.forestry = data;
+        renderForestry(data);
+        hideLoading();
+      })
+      .withFailureHandler(handleError)
+      .getForestryData(app.year);
+  }
+
+  function renderForestry(data) {
+    text("forestryNet", formatNumber(data.netValue));
+    text("forestryRemoval", formatNumber(data.totalRemoval));
+    text("forestryEmission", formatNumber(data.totalEmission));
+
+    renderForestryBar(data);
+    renderForestryList(data);
+    renderForestryTrend(data);
+  }
+
+  function renderForestryBar(data) {
+    const table = new google.visualization.DataTable();
+    table.addColumn("string", "Subsektor");
+    table.addColumn("number", "Nilai");
+
+    data.categories.forEach((item) => {
+      table.addRow([item.kategori, item.nilai]);
+    });
+
+    const chart = new google.visualization.BarChart(document.getElementById("forestryBarChart"));
+    chart.draw(table, barOptions());
+  }
+
+  function renderForestryList(data) {
+    document.getElementById("forestryList").innerHTML = data.categories
+      .map((item) => `
+        <div class="sector-item">
+          <div class="sector-name">${escapeHtml(item.kategori)}</div>
+          <div class="sector-value">${formatNumber(item.nilai)}</div>
+          <div class="sector-meta">${item.nilai < 0 ? "Serapan / removal" : "Emisi"}</div>
+        </div>
+      `)
+      .join("");
+  }
+
+  function renderForestryTrend(data) {
+    const table = new google.visualization.DataTable();
+    table.addColumn("number", "Tahun");
+    table.addColumn("number", "Net Kehutanan");
+
+    data.trend.forEach((item) => {
+      table.addRow([item.tahun, item.nilai]);
+    });
+
+    const chart = new google.visualization.LineChart(document.getElementById("forestryTrendChart"));
+    chart.draw(table, lineOptions("Kehutanan"));
+  }
+
+  /* =========================
+     CHART OPTIONS & FORMATTING
+  ========================= */
+  function barOptions() {
+    return {
+      backgroundColor: "transparent",
+      legend: { position: "none" },
+      chartArea: {
+        left: 165,
+        top: 20,
+        right: 45,
+        bottom: 55,
+        width: "75%",
+        height: "75%",
+      },
+      hAxis: {
+        title: "Gg CO₂e",
+        baselineColor: "#aeb9c5",
+        gridlines: { color: "#edf0f4" },
+        textStyle: { color: "#758397", fontSize: 10 },
+      },
+      vAxis: {
+        textStyle: { color: "#445568", fontSize: 11 },
+      },
+    };
+  }
+
+  function lineOptions() {
+    return {
+      backgroundColor: "transparent",
+      legend: {
+        position: "top",
+        alignment: "start",
+        textStyle: { fontSize: 10 },
+      },
+      chartArea: {
+        left: 75,
+        top: 60,
+        right: 35,
+        bottom: 55,
+        width: "84%",
+        height: "70%",
+      },
+      hAxis: {
+        title: "Tahun",
+        format: "####",
+        gridlines: { color: "transparent" },
+        textStyle: { color: "#758397", fontSize: 10 },
+      },
+      vAxis: {
+        title: "Gg CO₂e",
+        baseline: 0,
+        baselineColor: "#aeb9c5",
+        gridlines: { color: "#edf0f4" },
+        textStyle: { color: "#758397", fontSize: 10 },
+      },
+      lineWidth: 3,
+      pointSize: 4,
+      interpolateNulls: true,
+    };
+  }
+
+  function formatSectorName(value) {
+    const sector = String(value || "").trim().toUpperCase();
+    const names = {
+      ENERGI: "Energi",
+      IPPU: "IPPU",
+      PERTANIAN: "Pertanian",
+      KEHUTANAN: "Kehutanan",
+      FOLU: "FOLU",
+      LIMBAH: "Limbah",
+    };
+    return names[sector] || sector;
+  }
+
+  function formatNumber(value) {
+    return new Intl.NumberFormat("id-ID", {
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2,
+    }).format(Number(value) || 0);
+  }
+
+  function formatPercent(value) {
+    return (
+      new Intl.NumberFormat("id-ID", {
+        minimumFractionDigits: 1,
+        maximumFractionDigits: 1,
+      }).format(Number(value) || 0) + "%"
+    );
+  }
+
+  function text(id, value) {
+    const element = document.getElementById(id);
+    if (element) element.textContent = value;
+  }
+
+  function escapeHtml(value) {
+    return String(value ?? "")
+      .replaceAll("&", "&amp;")
+      .replaceAll("<", "&lt;")
+      .replaceAll(">", "&gt;")
+      .replaceAll('"', "&quot;")
+      .replaceAll("'", "&#039;");
+  }
+
+  function showLoading() {
+    document.getElementById("loading").style.display = "flex";
+  }
+
+  function hideLoading() {
+    document.getElementById("loading").style.display = "none";
+  }
+
+  function handleError(error) {
+    hideLoading();
+    console.error(error);
+    alert("Terjadi kesalahan:\n" + (error && error.message ? error.message : error));
+  }
+
+  let resizeTimer;
+  window.addEventListener("resize", () => {
+    clearTimeout(resizeTimer);
+    resizeTimer = setTimeout(() => {
+      if (app.page === "summary" && app.summary) {
+        renderSummaryBar(app.summary);
+        renderSummaryTrend(app.summary);
+      }
+      if (app.page === "trend" && app.allSectorTrend) {
+        renderAllSectorTrend();
+      }
+      if (app.page === "sector" && app.category && app.categoryTrend) {
+        renderCategory(app.category, app.categoryTrend);
+      }
+      if (app.page === "national" && app.national) {
+        renderNationalPage();
+      }
+      if (app.page === "forestry" && app.forestry) {
+        renderForestry(app.forestry);
+      }
+    }, 250);
+  });
+
+  function updateHeroYearFilter() {
+    const filter = document.getElementById("heroYearFilter");
+    if (!filter) return;
+    filter.style.display = (app.page === "trend" || app.page === "national") ? "none" : "block";
+  }
+</script>
