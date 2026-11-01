@@ -35,7 +35,7 @@ Aplikasi terdiri dari enam halaman yang diakses melalui sidebar.
 
 | Halaman | ID Page | Deskripsi |
 | --- | --- | --- |
-| **Tren** | `trend` | Perbandingan emisi seluruh sektor dari tahun ke tahun dalam bentuk *combo chart* (batang = per sektor, garis = total emisi GRK) beserta tabel matriks emisi per tahun. Filter tahun awal & tahun akhir. |
+| **Tren (Emisi Bontang)** | `trend` | Perbandingan emisi seluruh sektor dari tahun ke tahun dalam bentuk *combo chart* (batang = per sektor, garis = total emisi GRK) beserta tabel matriks emisi per tahun, filter tahun awal & tahun akhir. Dilanjutkan satu section data ekonomi khusus Kota Bontang: KPI Total Emisi/ADHK/Intensitas GRK terbaru, **dua** chart tren terpisah (ADHK, Intensitas GRK — dipisah karena beda skala/satuan), dan **satu** tabel data tahunan gabungan. |
 | **Emisi Nasional** | `national` | Perkembangan emisi GRK Indonesia berdasarkan sektor (satuan kt CO₂e), dilengkapi KPI total, sektor terbesar, perubahan tahunan, *stacked combo chart*, dan tabel per tahun. |
 | **Ringkasan** | `summary` | Gambaran umum emisi GRK Kota Bontang pada tahun terpilih: total emisi, sektor terbesar, jumlah sektor, perubahan tahunan, grafik sektor, tren total, dan *insight* otomatis. |
 | **Analisis Subsektor** | `sector` | Analisis emisi per subsektor untuk kombinasi tahun + sektor terpilih, mencakup KPI, *bar chart*, tren subsektor, dan tabel kontribusi. |
@@ -117,6 +117,7 @@ const SHEETS = {
   MASTER_SEKTOR: 'MASTER_SEKTOR',
   MASTER_SUBSEKTOR: 'MASTER_SUBSEKTOR',
   NASIONAL: 'DATA_NASIONAL',
+  EKONOMI_GRK: 'DATA_EKONOMI_GRK',
   USERS: 'USERS'
 };
 ```
@@ -195,7 +196,34 @@ Urutan kolom yang ditulis (8 kolom):
 Halaman nasional hanya menampilkan baris dengan `negara = INDONESIA`,
 `level_data = SEKTOR`, dan `jenis_nilai = EMISI`.
 
-### 6. `USERS` — akun operator
+### 6. `DATA_EKONOMI_GRK` — data ekonomi & intensitas emisi (Kota Bontang)
+
+Dibaca oleh `getEconomicData()`. Ditampilkan sebagai satu section pada halaman **Tren/Emisi Bontang** (bukan halaman Ringkasan, bukan page baru): 3 KPI (Total Emisi, ADHK, Intensitas GRK terbaru), **dua** chart terpisah ("Tren ADHK per Tahun" dan "Tren Intensitas GRK per Tahun" — dipisah karena skala/satuan berbeda jauh, menggabungkan jadi satu chart butuh normalisasi indeks yang kurang jelas dibaca), dan **satu** tabel gabungan "Data Tahunan Emisi dan Ekonomi Bontang" (kolom Tahun/Total Emisi/ADHK/Intensitas GRK, nilai asli). Hanya baris dengan `kota` yang cocok "Bontang" (tidak peka huruf besar/kecil, mengabaikan prefiks "KOTA " dan spasi tepi) yang diikutkan. Kolom emisi yang dipakai sebagai "Total Emisi" adalah `total_emisi_gg` (satuan Gg CO₂e, konsisten dengan seluruh chart lain di aplikasi) — bukan `total_emisi_ton`, dan kedua kolom tidak dijumlahkan.
+
+| Header | Keterangan |
+| --- | --- |
+| `tahun` | Tahun data |
+| `kota` | Nama kota (saat ini selalu `Bontang` pada data yang ada; tidak ada filter kota di UI) |
+| `total_emisi_gg` | Total emisi GRK Kota Bontang pada tahun tersebut, satuan **Gg CO₂e** |
+| `total_emisi_ton` | Total emisi dalam satuan ton CO₂e (`total_emisi_gg × 1000`) |
+| `adhk` | Nilai ekonomi (PDRB Atas Dasar Harga Konstan). **Satuan/skala belum terkonfirmasi dari sumber data** — jangan menampilkan label mata uang (mis. "Rp" / "Juta Rupiah") sampai dikonfirmasi oleh sumber resmi. Dashboard menampilkannya tanpa label satuan mata uang. |
+| `intensitas_grk` | Intensitas emisi = `total_emisi_gg / adhk × 1000`. Ditampilkan dengan satuan **Gg CO₂e / ADHK** (rasio, bukan satuan mata uang pasti). |
+
+> Baris dengan `tahun` kosong/non-numerik, atau salah satu kolom numerik wajib
+> (`total_emisi_gg`, `total_emisi_ton`, `adhk`, `intensitas_grk`) kosong/non-numerik,
+> **tidak diikutkan** dalam hasil (bukan dijadikan `0`). Bila seluruh baris tersaring,
+> fungsi mengembalikan struktur kosong (`years: []`, `data: []`, `latestYear: null`)
+> dan UI menampilkan *empty state*, bukan error atau angka nol palsu.
+
+### 7. `TABEL_NASIONAL` — referensi, tidak dipakai aplikasi
+
+Sheet ini ada pada workbook data (format pivot: kolom `Tahun, ENERGI, IPPU, PERTANIAN, FOLU, LIMBAH, TOTAL`).
+Diverifikasi berisi **data yang identik** dengan yang sudah tersedia di `DATA_NASIONAL`
+(format panjang, sudah dibaca oleh `getNationalEmissionData()`). Sheet ini adalah
+tabel referensi/staging, **tidak dibaca oleh kode aplikasi** — tidak perlu dan tidak
+ditambahkan fungsi backend untuk sheet ini agar tidak terjadi duplikasi sumber data.
+
+### 8. `USERS` — akun operator
 
 | Header | Keterangan |
 | --- | --- |
@@ -271,6 +299,7 @@ Fungsi publik pada `Code.gs` dapat dipanggil dari klien melalui `google.script.r
 | `getCategoryTrend(sector)` | `sector` | Deret waktu emisi setiap subsektor dalam satu sektor. |
 | `getForestryData(year)` | `year` | Data sektor Kehutanan: net emisi/serapan, total removal, emisi positif, daftar subsektor, dan tren net. |
 | `getNationalEmissionData()` | – | Matriks emisi nasional per sektor: tahun, sektor, data per tahun, tahun terakhir, `changePercent`, dan sektor terbesar. |
+| `getEconomicData()` | – | Data ekonomi & intensitas emisi Kota Bontang dari `DATA_EKONOMI_GRK` (sudah difilter `kota` = Bontang, case/spasi-insensitive), terurut tahun menaik: `years`, `data[]` (`tahun`, `kota`, `totalEmisiGg`, `totalEmisiTon`, `adhk`, `intensitasGrk` — tiap field numerik `null` bila sel kosong/tidak valid, bukan `0`), `latestYear`, `latest`, `latestAdhk`, `latestIntensitasGrk`, `previousYear`, `adhkChangePercent`, `intensitasChangePercent`. Mengembalikan struktur kosong (bukan error) bila tidak ada baris bertahun valid; baris/kolom yang dilewati dicatat via `console.log`. |
 | `verifyLogin(username, password)` | `username`, `password` | Verifikasi akun pada sheet `USERS`; mengembalikan `{ success, user }` atau `{ success: false, message }`. |
 | `saveEmissionData(formData, currentUser)` | `formData`, `currentUser` | Menambahkan baris baru ke `DATA_SEKTOR`, `DATA_SUBSEKTOR`, atau `DATA_NASIONAL`. Menolak jika sesi tidak valid. |
 
@@ -292,7 +321,7 @@ build maupun instalasi dependency.
 ### Prasyarat
 
 1. Akun Google dengan akses ke spreadsheet data.
-2. Spreadsheet berisi enam sheet: `DATA_SEKTOR`, `DATA_SUBSEKTOR`, `DATA_NASIONAL`, `MASTER_SEKTOR`, `MASTER_SUBSEKTOR`, `USERS` (lihat [Struktur Spreadsheet](#struktur-spreadsheet)).
+2. Spreadsheet berisi tujuh sheet yang dipakai aplikasi: `DATA_SEKTOR`, `DATA_SUBSEKTOR`, `DATA_NASIONAL`, `DATA_EKONOMI_GRK`, `MASTER_SEKTOR`, `MASTER_SUBSEKTOR`, `USERS` (lihat [Struktur Spreadsheet](#struktur-spreadsheet)). Sheet `TABEL_NASIONAL`, bila ada, tidak dibaca aplikasi.
 
 ### Langkah manual (editor Apps Script)
 
@@ -366,6 +395,10 @@ juga dicatat di console browser melalui `handleError()` dan ditampilkan sebagai 
 - **Komentar:** fungsi-fungsi utama di `Code.gs` dan bagian-bagian di
   `Scripts.html` diberi komentar pembuka bergaya blok (`/** ... */` atau
   `/* ==== JUDUL ==== */`).
+- **Chart ADHK dan Intensitas GRK** (`renderEconomicAdhkChart`/`renderEconomicIntensityChart` di
+  `Scripts.html`) memakai pola `formatChartColumns()` yang sama dengan chart lain di aplikasi
+  (axis + tooltip format `id-ID`). Tabel gabungan di bawahnya (`renderEconomicCombinedTable`)
+  memakai `formatNumber()` pada nilai asli; sel `null` ditampilkan `—`.
 
 ---
 
@@ -375,6 +408,9 @@ juga dicatat di console browser melalui `handleError()` dan ditampilkan sebagai 
 | --- | --- |
 | Data Kota Bontang (`DATA_SEKTOR`, `DATA_SUBSEKTOR`) | **Gg CO₂e** |
 | Data Nasional (`DATA_NASIONAL`) | **kt CO₂e** (kiloton) |
+| `DATA_EKONOMI_GRK` — emisi | **Gg CO₂e** (`total_emisi_gg`) dan ton CO₂e (`total_emisi_ton`) |
+| `DATA_EKONOMI_GRK` — `adhk` | PDRB Atas Dasar Harga Konstan; satuan/skala mata uang **belum terkonfirmasi**, tidak diberi label mata uang di UI/dokumentasi sampai dikonfirmasi sumber resmi |
+| `DATA_EKONOMI_GRK` — `intensitas_grk` | Gg CO₂e / ADHK (rasio `total_emisi_gg / adhk × 1000`) |
 
 - **Nilai negatif bukan kesalahan data.** Pada sektor Kehutanan, nilai negatif
   menunjukkan **serapan / removal** GRK. Halaman Kehutanan secara khusus memisahkan
@@ -411,6 +447,9 @@ juga dicatat di console browser melalui `handleError()` dan ditampilkan sebagai 
    spreadsheet.
 7. Data dibaca ulang dari spreadsheet setiap kali halaman dibuka, sehingga
    performa bergantung pada ukuran sheet.
+8. **Unit `adhk` belum terverifikasi** dari metadata/sumber resmi. Jangan menambah
+   label mata uang pada UI/dokumentasi sebelum dikonfirmasi; nilai ditampilkan
+   sebagai angka ADHK apa adanya.
 
 ---
 
@@ -425,6 +464,11 @@ Beberapa ide yang sejalan dengan struktur kode saat ini:
 - Halaman target/indikator (mis. perbandingan dengan target penurunan emisi).
 - Memindahkan `SPREADSHEET_ID` dan konfigurasi lain ke *Script Properties*.
 - Pengujian otomatis untuk `toNumber_()` dan agregasi tahunan.
+- Konfirmasi satuan/skala `adhk` dari sumber resmi (BPS/Bapperida) agar dapat
+  ditampilkan dengan label satuan mata uang yang benar.
+- Dukungan kota lain pada `getEconomicData()` bila suatu saat data mencakup
+  lebih dari satu kota (saat ini difilter ke Bontang saja; data lain difilter,
+  bukan ditolak dengan error).
 
 ---
 

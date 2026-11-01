@@ -1,202 +1,1109 @@
 <script>
-  google.charts.load("current", {
-    packages: ["corechart"],
-  });
+  google.charts.load("current", { packages: ["corechart"], language: "id" });
 
-  let app = {
+  /* =========================
+     KONFIGURASI TAMPILAN SEKTOR
+  ========================= */
+  const SECTOR_INFO = {
+    ENERGI: { label: "Energi", color: "#f59e0b", icon: "⚡", desc: "Pembakaran bahan bakar untuk listrik, industri, dan kendaraan." },
+    IPPU: { label: "Proses Industri (IPPU)", color: "#7c3aed", icon: "🏭", desc: "Gas yang keluar dari proses industri dan pemakaian produk tertentu (bukan dari bahan bakar)." },
+    PERTANIAN: { label: "Pertanian", color: "#65a30d", icon: "🌾", desc: "Peternakan, pemupukan, dan pengelolaan lahan pertanian." },
+    KEHUTANAN: { label: "Kehutanan", color: "#059669", icon: "🌳", desc: "Hutan dan penggunaan lahan. Nilai negatif berarti hutan menyerap karbon." },
+    FOLU: { label: "Hutan & Lahan (FOLU)", color: "#059669", icon: "🌳", desc: "Kehutanan dan penggunaan lahan lainnya. Nilai negatif berarti karbon diserap." },
+    LIMBAH: { label: "Limbah", color: "#b45309", icon: "🗑️", desc: "Pengelolaan sampah dan air limbah rumah tangga maupun industri." },
+  };
+  const FALLBACK_COLORS = ["#0ea5e9", "#e11d48", "#14b8a6", "#a855f7", "#64748b"];
+  const TOTAL_COLOR = "#1e293b";
+  const REMOVAL_COLOR = "#15803d";
+  const EMISSION_COLOR = "#c2410c";
+
+  function sectorInfo(code) {
+    const key = String(code || "").trim().toUpperCase();
+    if (SECTOR_INFO[key]) return SECTOR_INFO[key];
+    const index = Math.abs([...key].reduce((h, c) => h + c.charCodeAt(0), 0)) % FALLBACK_COLORS.length;
+    return { label: key, color: FALLBACK_COLORS[index], icon: "●", desc: "" };
+  }
+
+  /* =========================
+     STATE
+  ========================= */
+  const app = {
     years: [],
     sectors: [],
     year: null,
-    page: "trend",
-    summary: null,
-    allSectorTrend: null,
-    category: null,
-    categoryTrend: null,
-    forestry: null,
-    national: null,
-    currentUser: JSON.parse(sessionStorage.getItem("grk_user") || "null"),
+    page: "summary",
+    session: readStoredSession(),
     masterForm: { sektorList: [], subsektorList: [] },
-    activeSubsektors: []
+    activeSubsektors: [],
+    cache: {},
+    seq: {},
+    current: {},
   };
+
+  function readStoredSession() {
+    try {
+      return JSON.parse(sessionStorage.getItem("grk_session") || "null");
+    } catch (e) {
+      return null;
+    }
+  }
+
+  function storeSession(session) {
+    app.session = session;
+    try {
+      if (session) sessionStorage.setItem("grk_session", JSON.stringify(session));
+      else sessionStorage.removeItem("grk_session");
+    } catch (e) {
+      /* sessionStorage bisa diblokir; sesi tetap berlaku di memori */
+    }
+  }
+
+  /** Membungkus google.script.run menjadi Promise. */
+  function call(fnName, ...args) {
+    return new Promise((resolve, reject) => {
+      google.script.run.withSuccessHandler(resolve).withFailureHandler(reject)[fnName](...args);
+    });
+  }
+
+  /** Mengambil data dengan cache di browser; cache dihapus setiap ada data baru disimpan. */
+  function cached(key, loader) {
+    if (!(key in app.cache)) {
+      app.cache[key] = loader().catch((err) => {
+        delete app.cache[key];
+        throw err;
+      });
+    }
+    return app.cache[key];
+  }
+
+  /** Menandai request terbaru per halaman agar respons lama tidak menimpa yang baru. */
+  function nextSeq(name) {
+    app.seq[name] = (app.seq[name] || 0) + 1;
+    return app.seq[name];
+  }
+
+  function isLatest(name, seq) {
+    return app.seq[name] === seq;
+  }
 
   google.charts.setOnLoadCallback(init);
 
   /* =========================
-     INISIALISASI APLIKASI
+     INISIALISASI
   ========================= */
-  function init() {
+  async function init() {
     showLoading();
+    renderGuideSectors();
 
-    google.script.run
-      .withSuccessHandler((data) => {
-        app.years = data.years;
-        app.sectors = data.sectors;
-        app.year = data.latestYear;
-
-        setupFilters();
-        updateHeroYearFilter();
-        loadTrendPage();
-        checkAuthSession();
-        loadMasterFormData();
-      })
-      .withFailureHandler(handleError)
-      .getInitialData();
-  }
-
-  function loadMasterFormData() {
-    google.script.run
-      .withSuccessHandler((res) => {
-        app.masterForm = res;
-        populateSektorOptions();
-      })
-      .getMasterFormData();
-  }
-
-  /* =========================
-     AUTENTIKASI & SESI LOGIN
-  ========================= */
-  function checkAuthSession() {
-    const navInput = document.getElementById("nav-input");
-    const authBtnText = document.getElementById("authBtnText");
-
-    if (app.currentUser) {
-      if (navInput) navInput.style.display = "flex";
-      if (authBtnText) {
-        authBtnText.textContent = `Logout (${app.currentUser.nama || app.currentUser.username})`;
-      }
-    } else {
-      if (navInput) navInput.style.display = "none";
-      if (authBtnText) authBtnText.textContent = "Login";
-      if (app.page === "input") {
-        openPage("trend", document.querySelector('[data-page="trend"]'));
-      }
+    try {
+      const [initial] = await Promise.all([call("getInitialData"), restoreSession()]);
+      applyInitialData(initial);
+      updateAuthUI();
+      openPage("summary");
+      loadMasterFormData();
+    } catch (err) {
+      handleError(err);
+    } finally {
+      hideLoading();
     }
   }
 
-  function handleAuthClick() {
-    if (app.currentUser) {
-      if (confirm("Keluar dari sesi login operator?")) {
-        sessionStorage.removeItem("grk_user");
-        app.currentUser = null;
-        checkAuthSession();
-        openPage("trend", document.querySelector('[data-page="trend"]'));
+  function applyInitialData(data) {
+    app.years = data.years || [];
+    app.sectors = data.sectors || [];
+    if (!app.years.includes(app.year)) app.year = data.latestYear;
+    setupFilters();
+  }
+
+  async function restoreSession() {
+    if (!app.session || !app.session.token) return;
+    try {
+      const result = await call("validateSession", app.session.token);
+      if (result) storeSession({ token: app.session.token, user: result.user, canWrite: result.canWrite });
+      else storeSession(null);
+    } catch (e) {
+      storeSession(null);
+    }
+  }
+
+  function loadMasterFormData() {
+    call("getMasterFormData")
+      .then((res) => {
+        app.masterForm = res;
+        populateSektorOptions();
+      })
+      .catch((err) => console.error(err));
+  }
+
+  /* =========================
+     NAVIGASI & FILTER
+  ========================= */
+  function setupFilters() {
+    populateSelect("globalYear", app.years.map((y) => ({ value: y, label: y })), app.year);
+    populateSelect(
+      "categorySector",
+      app.sectors.map((s) => ({ value: s, label: sectorInfo(s).label })),
+      document.getElementById("categorySector").value || app.sectors[0]
+    );
+
+    const ascending = [...app.years].sort((a, b) => a - b).map((y) => ({ value: y, label: y }));
+    populateSelect("trendStartYear", ascending, ascending.length ? ascending[0].value : null);
+    populateSelect("trendEndYear", ascending, ascending.length ? ascending[ascending.length - 1].value : null);
+  }
+
+  function populateSelect(id, items, selected) {
+    const element = document.getElementById(id);
+    if (!element) return;
+    element.innerHTML = "";
+    items.forEach((item) => {
+      const option = document.createElement("option");
+      option.value = item.value;
+      option.textContent = item.label;
+      option.selected = String(item.value) === String(selected);
+      element.appendChild(option);
+    });
+  }
+
+  function openPage(page) {
+    if (page === "input" && !(app.session && app.session.canWrite)) {
+      openLoginModal();
+      return;
+    }
+
+    app.page = page;
+    document.querySelectorAll(".page").forEach((el) => el.classList.toggle("active", el.id === "page-" + page));
+    document.querySelectorAll(".nav-item[data-page]").forEach((el) => el.classList.toggle("active", el.dataset.page === page));
+
+    const yearFilterPages = ["summary", "sector", "forestry"];
+    document.getElementById("heroYearFilter").hidden = !yearFilterPages.includes(page);
+
+    switch (page) {
+      case "summary": loadSummary(); break;
+      case "trend": loadTrendPage(); loadEconomicData(); break;
+      case "national": loadNationalPage(); break;
+      case "sector": loadCategoryPage(); break;
+      case "forestry": loadForestryPage(); break;
+      case "input": renderFormUser(); break;
+    }
+  }
+
+  function globalYearChanged() {
+    app.year = Number(document.getElementById("globalYear").value);
+    if (app.page === "summary") loadSummary();
+    if (app.page === "sector") loadCategoryPage();
+    if (app.page === "forestry") loadForestryPage();
+  }
+
+  /* =========================
+     RINGKASAN
+  ========================= */
+  async function loadSummary() {
+    if (!app.year) return showNoData();
+    const seq = nextSeq("summary");
+    showLoading();
+    try {
+      const data = await cached("summary:" + app.year, () => call("getSummaryData", app.year));
+      if (!isLatest("summary", seq)) return;
+      app.current.summary = data;
+      renderSummary(data);
+    } catch (err) {
+      handleError(err);
+    } finally {
+      hideLoading();
+    }
+  }
+
+  function showNoData() {
+    text("summaryYearLabel", "-");
+    showEmpty("summaryBarChart", "Belum ada data emisi di spreadsheet.");
+    showEmpty("summaryTrendChart", "Belum ada data emisi di spreadsheet.");
+  }
+
+  function renderSummary(data) {
+    text("summaryYearLabel", data.year);
+    text("summaryTotal", formatNumber(data.total));
+    text("summaryTotalHuman", data.sectors.length ? "≈ " + humanTon(data.total) + " CO₂e" : "");
+
+    if (data.largestSector) {
+      const info = sectorInfo(data.largestSector.sektor);
+      const share = data.grossEmission ? (data.largestSector.nilai / data.grossEmission) * 100 : 0;
+      text("summaryLargest", info.icon + " " + info.label);
+      text("summaryLargestValue", formatNumber(data.largestSector.nilai) + " kt CO₂e");
+      text("summaryLargestPercent", formatPercent(share) + " dari seluruh emisi");
+    } else {
+      text("summaryLargest", "-");
+      text("summaryLargestValue", "Belum ada data");
+      text("summaryLargestPercent", "");
+    }
+
+    renderChangeKpi("summaryChangeValue", "summaryChange", data.changePercent, data.previousYear, false, "emisi");
+
+    if (data.totalRemoval > 0) {
+      const offset = data.grossEmission ? (data.totalRemoval / data.grossEmission) * 100 : 0;
+      text("summaryRemoval", formatNumber(data.totalRemoval));
+      text("summaryRemovalNote", "Mengimbangi " + formatPercent(offset) + " dari seluruh emisi");
+    } else {
+      text("summaryRemoval", "0");
+      text("summaryRemovalNote", "Tidak ada serapan tercatat tahun ini");
+    }
+
+    renderSummaryBar(data);
+    renderSectorList(data);
+    renderSummaryTrend(data);
+    renderSummaryInsights(data);
+  }
+
+  function renderSummaryBar(data) {
+    text("summaryBarSubtitle", "Tahun " + data.year + " • kt CO₂e • batang lebih panjang = emisi lebih besar");
+    if (!data.sectors.length) return showEmpty("summaryBarChart", "Belum ada data untuk tahun " + data.year + ".");
+
+    drawColoredBar(
+      "summaryBarChart",
+      data.sectors.map((s) => ({
+        label: sectorInfo(s.sektor).label,
+        value: s.nilai,
+        color: s.nilai < 0 ? REMOVAL_COLOR : sectorInfo(s.sektor).color,
+      }))
+    );
+  }
+
+  function renderSectorList(data) {
+    const container = document.getElementById("summarySectorList");
+    if (!data.sectors.length) {
+      container.innerHTML = '<div class="empty-state" style="height:200px">Belum ada data.</div>';
+      return;
+    }
+
+    container.innerHTML = data.sectors
+      .map((item) => {
+        const info = sectorInfo(item.sektor);
+        const negative = item.nilai < 0;
+        const share = !negative && data.grossEmission ? (item.nilai / data.grossEmission) * 100 : 0;
+        return `
+          <div class="sector-item">
+            <div class="sector-row">
+              <div class="sector-name"><span class="sector-dot" style="background:${info.color}"></span>${escapeHtml(info.label)}</div>
+              <div class="sector-value ${negative ? "negative" : ""}">${formatNumber(item.nilai)}</div>
+            </div>
+            ${negative
+              ? `<div class="sector-meta">🌱 Menyerap ${formatNumber(Math.abs(item.nilai))} kt CO₂e</div>`
+              : `<div class="progress"><span style="width:${Math.min(share, 100)}%;background:${info.color}"></span></div>
+                 <div class="sector-meta">${formatPercent(share)} dari seluruh emisi</div>`}
+          </div>`;
+      })
+      .join("");
+  }
+
+  function renderSummaryTrend(data) {
+    if (!data.totalTrend.length) return showEmpty("summaryTrendChart", "Belum ada data tren.");
+    drawLine("summaryTrendChart", ["Total emisi bersih"], data.totalTrend.map((t) => [t.tahun, t.nilai]), {
+      colors: [TOTAL_COLOR]
+    });
+  }
+
+  function renderSummaryInsights(data) {
+    const items = [];
+
+    if (data.largestSector) {
+      const info = sectorInfo(data.largestSector.sektor);
+      const share = data.grossEmission ? (data.largestSector.nilai / data.grossEmission) * 100 : 0;
+      items.push(["🏆", `Penyumbang emisi terbesar tahun ${data.year} adalah sektor <strong>${escapeHtml(info.label)}</strong>, yaitu sekitar <strong>${formatPercent(share)}</strong> dari seluruh emisi.`]);
+    }
+
+    if (data.changePercent !== null && data.changePercent !== undefined) {
+      const up = data.changePercent > 0;
+      items.push([up ? "📈" : "📉", `Dibanding ${data.previousYear}, total emisi bersih <strong>${up ? "naik" : "turun"} ${formatPercent(Math.abs(data.changePercent))}</strong>. ${up ? "Artinya emisi bertambah." : "Artinya emisi berkurang, ini kabar baik."}`]);
+    }
+
+    if (data.totalRemoval > 0) {
+      items.push(["🌳", `Hutan dan lahan menyerap <strong>${formatNumber(data.totalRemoval)} kt CO₂e</strong> (≈ ${humanTon(data.totalRemoval)}), membantu mengurangi emisi bersih kota.`]);
+    }
+
+    if (data.sectors.length) {
+      items.push(["🌫️", `Total emisi bersih ${data.year} setara dengan sekitar <strong>${humanTon(data.total)}</strong> karbon dioksida.`]);
+    }
+
+    document.getElementById("summaryInsights").innerHTML = items.length
+      ? items.map(([icon, html]) => `<div class="insight"><span class="insight-icon">${icon}</span><div>${html}</div></div>`).join("")
+      : '<div class="insight">Belum ada data untuk disimpulkan.</div>';
+  }
+
+  /* =========================
+     TREN EMISI BONTANG
+  ========================= */
+  async function loadTrendPage() {
+    const seq = nextSeq("trend");
+    showLoading();
+    try {
+      const data = await cached("trend", () => call("getAllSectorTrend"));
+      if (!isLatest("trend", seq)) return;
+      app.current.trend = data;
+      renderAllSectorTrend();
+    } catch (err) {
+      handleError(err);
+    } finally {
+      hideLoading();
+    }
+  }
+
+  function getYearRange(startId, endId) {
+    let start = Number(document.getElementById(startId).value);
+    let end = Number(document.getElementById(endId).value);
+    if (start > end) [start, end] = [end, start];
+    return [start, end];
+  }
+
+  function renderAllSectorTrend() {
+    const source = app.current.trend;
+    if (!source) return;
+
+    const [start, end] = getYearRange("trendStartYear", "trendEndYear");
+    const data = source.data.filter((d) => d.tahun >= start && d.tahun <= end);
+
+    renderTrendInsights(source.sectors, data);
+
+    if (!data.length) {
+      showEmpty("allSectorTrendChart", "Tidak ada data pada rentang tahun ini.");
+    } else {
+      drawSectorCombo("allSectorTrendChart", source.sectors, data, { stacked: false, totalLabel: "Total emisi bersih" });
+    }
+    renderMatrixTable("allSectorTableHead", "allSectorTableBody", source.sectors, data);
+  }
+
+  function renderTrendInsights(sectors, data) {
+    const box = document.getElementById("trendInsights");
+    if (data.length < 2) {
+      box.innerHTML = "";
+      return;
+    }
+
+    const first = data[0];
+    const last = data[data.length - 1];
+    const pills = [];
+
+    if (first.total !== 0) {
+      const change = ((last.total - first.total) / Math.abs(first.total)) * 100;
+      const up = change > 0;
+      pills.push([up ? "bad" : "good", `${up ? "📈" : "📉"} Dari ${first.tahun} ke ${last.tahun}, total emisi bersih <strong>${up ? "naik" : "turun"} ${formatPercent(Math.abs(change))}</strong>.`]);
+    }
+
+    const peak = data.reduce((max, d) => (d.total > max.total ? d : max), data[0]);
+    pills.push(["", `🔝 Emisi tertinggi terjadi pada tahun <strong>${peak.tahun}</strong> (${formatNumber(peak.total)} kt CO₂e).`]);
+
+    let biggest = null;
+    sectors.forEach((s) => {
+      const diff = (last.values[s] || 0) - (first.values[s] || 0);
+      if (!biggest || Math.abs(diff) > Math.abs(biggest.diff)) biggest = { sector: s, diff };
+    });
+    if (biggest && biggest.diff !== 0) {
+      const up = biggest.diff > 0;
+      pills.push([up ? "bad" : "good", `🔄 Perubahan terbesar ada di sektor <strong>${escapeHtml(sectorInfo(biggest.sector).label)}</strong>, ${up ? "bertambah" : "berkurang"} ${formatNumber(Math.abs(biggest.diff))} kt CO₂e.`]);
+    }
+
+    box.innerHTML = pills.map(([cls, html]) => `<div class="insight-pill ${cls}">${html}</div>`).join("");
+  }
+
+  /* =========================
+     EKONOMI & INTENSITAS
+  ========================= */
+  async function loadEconomicData() {
+    const seq = nextSeq("economic");
+    try {
+      const data = await cached("economic", () => call("getEconomicData"));
+      if (!isLatest("economic", seq)) return;
+      app.current.economic = data;
+      renderEconomicData(data);
+    } catch (err) {
+      console.error(err);
+      showEconomicEmptyState("Data ekonomi belum dapat dimuat.");
+    }
+  }
+
+  function showEconomicEmptyState(message) {
+    ["economicTotalEmisi", "economicAdhk", "economicIntensity"].forEach((id) => text(id, "-"));
+    text("economicAdhkYear", "-");
+    text("economicTotalEmisiYear", "kt CO₂e");
+    ["economicTotalEmisiChange", "economicAdhkChange", "economicIntensityChange"].forEach((id) => text(id, ""));
+    document.getElementById("economicCombinedTableBody").innerHTML =
+      `<tr><td colspan="4" class="missing">${escapeHtml(message)}</td></tr>`;
+    showEmpty("economicAdhkChart", message);
+    showEmpty("economicIntensityChart", message);
+  }
+
+  function renderEconomicData(data) {
+    if (!data || !Array.isArray(data.data) || !data.data.length) {
+      showEconomicEmptyState("Data ekonomi belum tersedia.");
+      return;
+    }
+
+    const rows = data.data;
+    const latest = rows[rows.length - 1];
+    const previous = rows.length > 1 ? rows[rows.length - 2] : null;
+
+    text("economicTotalEmisi", formatNumber(latest.totalEmisiGg));
+    text("economicTotalEmisiYear", "kt CO₂e • tahun " + latest.tahun);
+    text("economicAdhk", formatNumber(latest.adhk));
+    text("economicAdhkYear", "Tahun " + latest.tahun);
+    text("economicIntensity", formatNumber(latest.intensitasGrk, 4));
+
+    renderChangeFooter("economicTotalEmisiChange", latest.totalEmisiGg, previous && previous.totalEmisiGg, previous && previous.tahun, false);
+    renderChangeFooter("economicAdhkChange", latest.adhk, previous && previous.adhk, previous && previous.tahun, true);
+    renderChangeFooter("economicIntensityChange", latest.intensitasGrk, previous && previous.intensitasGrk, previous && previous.tahun, false);
+
+    const adhkRows = rows.filter((r) => r.adhk !== null).map((r) => [r.tahun, r.adhk]);
+    const intensityRows = rows.filter((r) => r.intensitasGrk !== null).map((r) => [r.tahun, r.intensitasGrk]);
+
+    if (adhkRows.length) {
+      drawLine("economicAdhkChart", ["ADHK"], adhkRows, { colors: ["#d97706"], vTitle: "ADHK" });
+    } else {
+      showEmpty("economicAdhkChart", "Data ADHK belum tersedia.");
+    }
+
+    if (intensityRows.length) {
+      drawLine("economicIntensityChart", ["Intensitas GRK"], intensityRows, {
+        colors: ["#15803d"],
+        vTitle: "kt CO₂e / ADHK",
+        decimals: 4,
+      });
+    } else {
+      showEmpty("economicIntensityChart", "Data intensitas belum tersedia.");
+    }
+
+    const cell = (v, d) => (v === null || v === undefined ? '<td class="num missing">—</td>' : `<td class="num">${formatNumber(v, d)}</td>`);
+    document.getElementById("economicCombinedTableBody").innerHTML = [...rows]
+      .sort((a, b) => b.tahun - a.tahun)
+      .map((r) => `<tr><td class="year-cell">${r.tahun}</td>${cell(r.totalEmisiGg)}${cell(r.adhk)}${cell(r.intensitasGrk, 4)}</tr>`)
+      .join("");
+  }
+
+  /* =========================
+     RINCIAN PER SEKTOR
+  ========================= */
+  async function loadCategoryPage() {
+    const sector = document.getElementById("categorySector").value;
+    const year = app.year;
+    if (!sector || !year) return;
+
+    renderSectorDescription(sector);
+    const seq = nextSeq("category");
+    showLoading();
+
+    try {
+      const [data, trend] = await Promise.all([
+        cached(`category:${year}:${sector}`, () => call("getCategoryData", year, sector)),
+        cached(`categoryTrend:${sector}`, () => call("getCategoryTrend", sector)),
+      ]);
+      if (!isLatest("category", seq)) return;
+      app.current.category = data;
+      app.current.categoryTrend = trend;
+      renderCategory(data, trend);
+    } catch (err) {
+      handleError(err);
+    } finally {
+      hideLoading();
+    }
+  }
+
+  function renderSectorDescription(sector) {
+    const info = sectorInfo(sector);
+    const box = document.getElementById("sectorDescription");
+    box.style.borderLeftColor = info.color;
+    box.innerHTML = `
+      <span class="sector-hero-icon">${info.icon}</span>
+      <div>
+        <h3>${escapeHtml(info.label)}</h3>
+        <p>${escapeHtml(info.desc || "Rincian emisi pada sektor ini.")}</p>
+      </div>`;
+  }
+
+  function renderCategory(data, trend) {
+    const info = sectorInfo(data.sector);
+    const hasData = data.categories.length > 0;
+
+    text("categoryTotal", hasData ? formatNumber(data.total) : "-");
+    text("categoryTotalHuman", hasData ? "≈ " + humanTon(data.total) + " CO₂e" : "");
+    text("categoryCount", hasData ? data.categoryCount : "0");
+
+    if (data.largestCategory) {
+      text("largestCategory", data.largestCategory.kategori);
+      text("largestCategoryValue", formatNumber(data.largestCategory.nilai) + " kt CO₂e");
+    } else {
+      text("largestCategory", "-");
+      text("largestCategoryValue", hasData ? "Tidak ada emisi positif" : "Belum ada data tahun " + data.year);
+    }
+
+    text("categoryBarTitle", `Emisi tiap subsektor ${info.label} — ${data.year}`);
+    text("categoryTrendTitle", `Perkembangan subsektor ${info.label}`);
+
+    if (hasData) {
+      drawColoredBar(
+        "categoryBarChart",
+        data.categories.map((c) => ({ label: c.kategori, value: c.nilai, color: c.nilai < 0 ? REMOVAL_COLOR : info.color }))
+      );
+    } else {
+      showEmpty("categoryBarChart", `Belum ada rincian subsektor ${info.label} untuk tahun ${data.year}.`);
+    }
+
+    renderCategoryTrend(trend);
+    renderCategoryTable(data, info);
+  }
+
+  function renderCategoryTrend(trend) {
+    if (!trend.data.length || !trend.categories.length) {
+      return showEmpty("categoryTrendChart", "Belum ada data tren untuk sektor ini.");
+    }
+    const rows = trend.data.map((d) => [d.tahun, ...trend.categories.map((c) => (d.values[c] ?? null))]);
+    drawLine("categoryTrendChart", trend.categories, rows, { legendBottom: true });
+  }
+
+  function renderCategoryTable(data, info) {
+    const body = document.getElementById("categoryTable");
+    if (!data.categories.length) {
+      body.innerHTML = '<tr><td colspan="3" class="missing">Belum ada data.</td></tr>';
+      return;
+    }
+
+    body.innerHTML = data.categories
+      .map((item) => {
+        const negative = item.nilai < 0;
+        const share = !negative && data.grossEmission ? (item.nilai / data.grossEmission) * 100 : 0;
+        const shareCell = negative
+          ? '<span class="badge good">🌱 Serapan</span>'
+          : `<div class="share-wrap"><div class="progress"><span style="width:${Math.min(share, 100)}%;background:${info.color}"></span></div><span class="share-text">${formatPercent(share)}</span></div>`;
+        return `
+          <tr>
+            <td>${escapeHtml(item.kategori)}</td>
+            <td class="num ${negative ? "negative" : ""}">${formatNumber(item.nilai)}</td>
+            <td class="share-cell">${shareCell}</td>
+          </tr>`;
+      })
+      .join("");
+  }
+
+  /* =========================
+     HUTAN & SERAPAN
+  ========================= */
+  async function loadForestryPage() {
+    if (!app.year) return;
+    const seq = nextSeq("forestry");
+    showLoading();
+    try {
+      const data = await cached("forestry:" + app.year, () => call("getForestryData", app.year));
+      if (!isLatest("forestry", seq)) return;
+      app.current.forestry = data;
+      renderForestry(data);
+    } catch (err) {
+      handleError(err);
+    } finally {
+      hideLoading();
+    }
+  }
+
+  function renderForestry(data) {
+    const hasData = data.categories.length > 0;
+
+    text("forestryRemoval", hasData ? formatNumber(data.totalRemoval) : "-");
+    text("forestryRemovalHuman", hasData && data.totalRemoval > 0 ? "≈ " + humanTon(data.totalRemoval) + " CO₂ diserap" : "");
+    text("forestryEmission", hasData ? formatNumber(data.totalEmission) : "-");
+    text("forestryNet", hasData ? formatNumber(data.netValue) : "-");
+
+    const netEl = document.getElementById("forestryNet");
+    netEl.className = "kpi-value " + (hasData ? (data.netValue < 0 ? "good" : "bad") : "");
+    text(
+      "forestryNetNote",
+      !hasData ? "" : data.netValue < 0 ? "🌱 Hutan menyerap lebih banyak daripada yang dilepas" : "⚠️ Hutan melepas lebih banyak daripada yang diserap"
+    );
+    text("forestryListSubtitle", "Tahun " + data.year);
+
+    if (hasData) {
+      drawColoredBar(
+        "forestryBarChart",
+        data.categories.map((c) => ({ label: c.kategori, value: c.nilai, color: c.nilai < 0 ? REMOVAL_COLOR : EMISSION_COLOR }))
+      );
+      document.getElementById("forestryList").innerHTML = data.categories
+        .map((c) => `
+          <div class="sector-item">
+            <div class="sector-row">
+              <div class="sector-name"><span class="sector-dot" style="background:${c.nilai < 0 ? REMOVAL_COLOR : EMISSION_COLOR}"></span>${escapeHtml(c.kategori)}</div>
+              <div class="sector-value ${c.nilai < 0 ? "negative" : ""}">${formatNumber(c.nilai)}</div>
+            </div>
+            <div class="sector-meta">${c.nilai < 0 ? "🌱 Menyerap karbon" : "🔥 Melepas karbon"}</div>
+          </div>`)
+        .join("");
+    } else {
+      showEmpty("forestryBarChart", "Belum ada data kehutanan untuk tahun " + data.year + ".");
+      document.getElementById("forestryList").innerHTML = '<div class="empty-state" style="height:200px">Belum ada data.</div>';
+    }
+
+    if (data.trend.length) {
+      drawLine("forestryTrendChart", ["Hasil bersih kehutanan"], data.trend.map((t) => [t.tahun, t.nilai]), {
+        colors: [REMOVAL_COLOR],
+      });
+    } else {
+      showEmpty("forestryTrendChart", "Belum ada data tren kehutanan.");
+    }
+  }
+
+  /* =========================
+     PEMBANDING NASIONAL
+  ========================= */
+  async function loadNationalPage() {
+    const firstLoad = !app.current.national;
+    const seq = nextSeq("national");
+    showLoading();
+    try {
+      const data = await cached("national", () => call("getNationalEmissionData"));
+      if (!isLatest("national", seq)) return;
+      const changed = app.current.national !== data;
+      app.current.national = data;
+      if (firstLoad || changed) {
+        const years = [...data.years].sort((a, b) => a - b).map((y) => ({ value: y, label: y }));
+        populateSelect("nationalStartYear", years, years.length ? years[0].value : null);
+        populateSelect("nationalEndYear", years, years.length ? years[years.length - 1].value : null);
       }
+      renderNationalPage();
+    } catch (err) {
+      handleError(err);
+    } finally {
+      hideLoading();
+    }
+  }
+
+  function renderNationalPage() {
+    const data = app.current.national;
+    if (!data) return;
+
+    const [start, end] = getYearRange("nationalStartYear", "nationalEndYear");
+    const filtered = data.data.filter((d) => d.tahun >= start && d.tahun <= end);
+
+    renderNationalKpi(data);
+    if (filtered.length) {
+      drawSectorCombo("nationalEmissionChart", data.sectors, filtered, { stacked: true, totalLabel: "Total nasional" });
+    } else {
+      showEmpty("nationalEmissionChart", "Tidak ada data pada rentang tahun ini.");
+    }
+    renderNationalTable(data.sectors, filtered);
+  }
+
+  function renderNationalKpi(data) {
+    if (data.latestTotal === null) {
+      ["nationalTotal", "nationalLargestSector", "nationalLargestValue", "nationalChange", "nationalChangeYear"].forEach((id) => text(id, "-"));
+      text("nationalYear", "Belum ada data");
+      text("nationalTotalHuman", "");
+      return;
+    }
+
+    text("nationalTotal", formatNumber(data.latestTotal));
+    text("nationalTotalHuman", "≈ " + humanTon(data.latestTotal) + " CO₂e");
+    text("nationalYear", "Data tahun " + data.latestYear);
+
+    if (data.largestSector) {
+      const info = sectorInfo(data.largestSector.sektor);
+      text("nationalLargestSector", info.icon + " " + info.label);
+      text("nationalLargestValue", formatNumber(data.largestSector.nilai) + " kt CO₂e");
+    } else {
+      text("nationalLargestSector", "-");
+      text("nationalLargestValue", "-");
+    }
+
+    renderChangeKpi("nationalChange", null, data.changePercent, data.previousYear, false, "emisi");
+    text("nationalChangeYear", data.previousYear ? "dibanding " + data.previousYear : "Belum ada tahun pembanding");
+  }
+
+  function renderNationalTable(sectors, data) {
+    document.getElementById("nationalTableHead").innerHTML = `
+      <tr>
+        <th>Tahun</th>
+        ${sectors.map((s) => `<th class="num">${escapeHtml(sectorInfo(s).label)}</th>`).join("")}
+        <th class="num">Total</th>
+      </tr>`;
+
+    document.getElementById("nationalTableBody").innerHTML = data.length
+      ? data
+          .map((d) => `
+            <tr>
+              <td class="year-cell">${d.tahun}</td>
+              ${sectors.map((s) => `<td class="num ${(d.values[s] || 0) < 0 ? "negative" : ""}">${formatNumber(d.values[s] || 0)}</td>`).join("")}
+              <td class="num"><strong>${formatNumber(d.total)}</strong></td>
+            </tr>`)
+          .join("")
+      : `<tr><td colspan="${sectors.length + 2}" class="missing">Tidak ada data.</td></tr>`;
+  }
+
+  /* =========================
+     KOMPONEN CHART
+  ========================= */
+  function baseChartOptions() {
+    return {
+      backgroundColor: "transparent",
+      fontName: "Plus Jakarta Sans",
+      fontSize: 12,
+      tooltip: { textStyle: { fontSize: 13 } },
+      animation: { duration: 400, easing: "out", startup: true },
+    };
+  }
+
+  function prepareChartElement(id) {
+    const el = document.getElementById(id);
+    el.classList.remove("empty-state");
+    el.textContent = "";
+    return el;
+  }
+
+  function showEmpty(id, message) {
+    const el = document.getElementById(id);
+    if (!el) return;
+    el.classList.add("empty-state");
+    el.textContent = message;
+  }
+
+  /** Bar chart horizontal dengan warna per batang. items: [{label, value, color}] */
+  function drawColoredBar(id, items) {
+    const el = prepareChartElement(id);
+    const table = new google.visualization.DataTable();
+    table.addColumn("string", "Nama");
+    table.addColumn("number", "kt CO₂e");
+    table.addColumn({ type: "string", role: "style" });
+    table.addColumn({ type: "string", role: "annotation" });
+    items.forEach((i) => table.addRow([i.label, i.value, i.color, formatNumber(i.value)]));
+    formatChartColumns(table, [1]);
+
+    const longest = Math.max(...items.map((i) => String(i.label).length), 8);
+    const left = Math.min(Math.max(longest * 7, 110), 260);
+
+    new google.visualization.BarChart(el).draw(table, {
+      ...baseChartOptions(),
+      legend: { position: "none" },
+      chartArea: { left, top: 10, right: 70, bottom: 45 },
+      bar: { groupWidth: "65%" },
+      annotations: { alwaysOutside: true, textStyle: { fontSize: 11, color: "#3d4f63", bold: true }, stem: { length: 0 } },
+      hAxis: {
+        title: "kt CO₂e (ribu ton)",
+        format: "#,##0",
+        baselineColor: "#64748b",
+        gridlines: { color: "#eef2f6" },
+        textStyle: { color: "#64748b", fontSize: 11 },
+        titleTextStyle: { color: "#64748b", fontSize: 12, italic: false },
+      },
+      vAxis: { textStyle: { color: "#1b2a3a", fontSize: 12 } },
+    });
+  }
+
+  /** Line chart. columns: nama seri; rows: [tahun, nilai1, nilai2, ...] */
+  function drawLine(id, columns, rows, opts = {}) {
+    const el = prepareChartElement(id);
+    const table = new google.visualization.DataTable();
+    table.addColumn("number", "Tahun");
+    columns.forEach((c) => table.addColumn("number", c));
+    rows.forEach((r) => table.addRow(r));
+    formatChartColumns(table, columns.map((_, i) => i + 1), opts.decimals);
+
+    const options = {
+      ...baseChartOptions(),
+      legend: columns.length > 1
+        ? { position: opts.legendBottom ? "bottom" : "top", maxLines: 4, textStyle: { fontSize: 12, color: "#3d4f63" } }
+        : { position: "none" },
+      chartArea: { left: 80, top: 20, right: 30, bottom: columns.length > 1 && opts.legendBottom ? 90 : 50 },
+      hAxis: {
+        format: "####",
+        gridlines: { color: "transparent" },
+        textStyle: { color: "#64748b", fontSize: 11 },
+        ticks: rows.map((r) => r[0]),
+      },
+      vAxis: {
+        title: opts.vTitle || "kt CO₂e",
+        baseline: 0,
+        baselineColor: "#64748b",
+        gridlines: { color: "#eef2f6" },
+        minorGridlines: { color: "transparent" },
+        textStyle: { color: "#64748b", fontSize: 11 },
+        titleTextStyle: { color: "#64748b", fontSize: 12, italic: false },
+      },
+      lineWidth: 3,
+      pointSize: 7,
+      interpolateNulls: true,
+      focusTarget: columns.length > 1 ? "category" : "datum",
+    };
+    if (opts.colors) options.colors = opts.colors;
+    if (opts.decimals) options.vAxis.format = "#,##0.####";
+
+    new google.visualization.LineChart(el).draw(table, options);
+  }
+
+  /** Combo chart: batang per sektor + garis total. */
+  function drawSectorCombo(id, sectors, data, opts) {
+    const el = prepareChartElement(id);
+    const table = new google.visualization.DataTable();
+    table.addColumn("string", "Tahun");
+    sectors.forEach((s) => table.addColumn("number", sectorInfo(s).label));
+    table.addColumn("number", opts.totalLabel);
+    data.forEach((d) => table.addRow([String(d.tahun), ...sectors.map((s) => d.values[s] ?? 0), d.total]));
+    formatChartColumns(table, sectors.map((_, i) => i + 1).concat(sectors.length + 1));
+
+    const series = {};
+    sectors.forEach((s, i) => { series[i] = { type: "bars", color: sectorInfo(s).color }; });
+    series[sectors.length] = { type: "line", color: TOTAL_COLOR, lineWidth: 4, pointSize: 8 };
+
+    const manyYears = data.length > 10;
+    new google.visualization.ComboChart(el).draw(table, {
+      ...baseChartOptions(),
+      seriesType: "bars",
+      isStacked: !!opts.stacked,
+      series,
+      bar: { groupWidth: opts.stacked ? "60%" : "75%" },
+      chartArea: { left: 90, top: 20, right: 30, bottom: manyYears ? 110 : 90 },
+      legend: { position: "bottom", alignment: "center", maxLines: 3, textStyle: { fontSize: 12, color: "#3d4f63" } },
+      hAxis: {
+        textStyle: { fontSize: 11, color: "#64748b" },
+        slantedText: manyYears,
+        slantedTextAngle: 45,
+        gridlines: { color: "transparent" },
+      },
+      vAxis: {
+        title: "kt CO₂e (ribu ton)",
+        baseline: 0,
+        baselineColor: "#475569",
+        format: "#,##0",
+        gridlines: { color: "#eef2f6" },
+        minorGridlines: { color: "transparent" },
+        textStyle: { color: "#64748b", fontSize: 11 },
+        titleTextStyle: { color: "#64748b", fontSize: 12, italic: false },
+      },
+      focusTarget: "category",
+    });
+  }
+
+  function formatChartColumns(table, columns, decimals = 2) {
+    const formatter = new google.visualization.NumberFormat({
+      decimalSymbol: ",",
+      groupingSymbol: ".",
+      fractionDigits: decimals,
+    });
+    columns.forEach((c) => formatter.format(table, c));
+  }
+
+  function renderMatrixTable(headId, bodyId, sectors, data) {
+    document.getElementById(headId).innerHTML = `
+      <tr>
+        <th class="sticky-col">Sektor</th>
+        ${data.map((d) => `<th class="num">${d.tahun}</th>`).join("")}
+      </tr>`;
+
+    if (!data.length) {
+      document.getElementById(bodyId).innerHTML = '<tr><td class="missing">Tidak ada data.</td></tr>';
+      return;
+    }
+
+    const rows = sectors
+      .map((s) => {
+        const info = sectorInfo(s);
+        return `
+          <tr>
+            <td class="sticky-col"><span class="sector-name"><span class="sector-dot" style="background:${info.color}"></span>${escapeHtml(info.label)}</span></td>
+            ${data.map((d) => {
+              const v = d.values[s] ?? 0;
+              return `<td class="num ${v < 0 ? "negative" : ""}">${formatNumber(v)}</td>`;
+            }).join("")}
+          </tr>`;
+      })
+      .join("");
+
+    const total = `
+      <tr class="total-row">
+        <td class="sticky-col">Total emisi bersih</td>
+        ${data.map((d) => `<td class="num">${formatNumber(d.total)}</td>`).join("")}
+      </tr>`;
+
+    document.getElementById(bodyId).innerHTML = rows + total;
+  }
+
+  /* =========================
+     INDIKATOR PERUBAHAN
+  ========================= */
+  /**
+   * goodWhenUp: true untuk indikator yang sebaiknya naik (ADHK),
+   * false untuk yang sebaiknya turun (emisi, intensitas).
+   */
+  function changeBadge(change, goodWhenUp) {
+    if (change === null || change === undefined || !Number.isFinite(change)) return null;
+    const flat = Math.abs(change) < 0.05;
+    const up = change > 0;
+    const cls = flat ? "neutral" : up === goodWhenUp ? "good" : "bad";
+    const arrow = flat ? "→" : up ? "▲" : "▼";
+    const word = flat ? "Relatif tetap" : up ? "Naik" : "Turun";
+    return { cls, html: `<span class="badge ${cls}">${arrow} ${word} ${formatPercent(Math.abs(change))}</span>` };
+  }
+
+  function renderChangeKpi(valueId, noteId, change, previousYear, goodWhenUp, subject) {
+    const valueEl = document.getElementById(valueId);
+    const badge = changeBadge(change, goodWhenUp);
+
+    if (!badge) {
+      valueEl.textContent = "-";
+      valueEl.className = "kpi-value";
+      if (noteId) text(noteId, "Belum ada tahun pembanding");
+      return;
+    }
+
+    valueEl.textContent = (change > 0 ? "+" : change < 0 ? "−" : "") + formatPercent(Math.abs(change));
+    valueEl.className = "kpi-value " + (badge.cls === "neutral" ? "" : badge.cls);
+
+    if (noteId) {
+      const meaning = badge.cls === "neutral"
+        ? `${subject} hampir sama`
+        : change > 0 ? `${subject} bertambah` : `${subject} berkurang`;
+      document.getElementById(noteId).innerHTML =
+        `${badge.html} dibanding ${previousYear}<br><span>${meaning.charAt(0).toUpperCase() + meaning.slice(1)}${badge.cls === "good" ? " — kabar baik" : badge.cls === "bad" ? " — perlu perhatian" : ""}.</span>`;
+    }
+  }
+
+  function renderChangeFooter(elementId, current, previous, previousYear, goodWhenUp) {
+    const el = document.getElementById(elementId);
+    if (current === null || current === undefined || previous === null || previous === undefined || Number(previous) === 0) {
+      el.textContent = "Belum ada tahun pembanding";
+      return;
+    }
+    const change = ((Number(current) - Number(previous)) / Math.abs(Number(previous))) * 100;
+    el.innerHTML = `${changeBadge(change, goodWhenUp).html} dibanding ${previousYear}`;
+  }
+
+  /* =========================
+     AUTENTIKASI
+  ========================= */
+  function updateAuthUI() {
+    const loggedIn = !!(app.session && app.session.user);
+    document.getElementById("nav-input").hidden = !(loggedIn && app.session.canWrite);
+    text("authBtnText", loggedIn ? "Logout" : "Login Operator");
+    text("authBtnDesc", loggedIn ? app.session.user.nama || app.session.user.username : "Untuk menambah data");
+
+    if (!loggedIn && app.page === "input") openPage("summary");
+  }
+
+  function renderFormUser() {
+    const box = document.getElementById("formUserInfo");
+    box.innerHTML = app.session
+      ? `👤 Login sebagai <strong>${escapeHtml(app.session.user.nama || app.session.user.username)}</strong>`
+      : "";
+  }
+
+  function handleAuthClick() {
+    if (app.session) {
+      if (!confirm("Keluar dari akun operator?")) return;
+      const token = app.session.token;
+      storeSession(null);
+      updateAuthUI();
+      call("logout", token).catch(() => {});
+      toast("Anda sudah logout.");
     } else {
       openLoginModal();
     }
   }
 
   function openLoginModal() {
-    document.getElementById("loginModal").style.display = "flex";
-    document.getElementById("loginError").style.display = "none";
-    document.getElementById("loginUsername").focus();
+    document.getElementById("loginModal").hidden = false;
+    document.getElementById("loginError").hidden = true;
+    document.getElementById("loginPassword").value = "";
+    setTimeout(() => document.getElementById("loginUsername").focus(), 50);
   }
 
   function closeLoginModal() {
-    document.getElementById("loginModal").style.display = "none";
+    document.getElementById("loginModal").hidden = true;
   }
 
-  function handleLoginSubmit(e) {
+  async function handleLoginSubmit(e) {
     e.preventDefault();
-    const u = document.getElementById("loginUsername").value;
-    const p = document.getElementById("loginPassword").value;
     const btn = document.getElementById("btnLoginSubmit");
     const errBox = document.getElementById("loginError");
 
     btn.disabled = true;
-    btn.textContent = "Memverifikasi...";
-    errBox.style.display = "none";
+    btn.textContent = "Memeriksa…";
+    errBox.hidden = true;
 
-    google.script.run
-      .withSuccessHandler((res) => {
-        btn.disabled = false;
-        btn.textContent = "Masuk";
-        if (res.success) {
-          app.currentUser = res.user;
-          sessionStorage.setItem("grk_user", JSON.stringify(res.user));
-          closeLoginModal();
-          checkAuthSession();
-          openPage("input", document.getElementById("nav-input"));
-        } else {
-          errBox.textContent = res.message;
-          errBox.style.display = "block";
-        }
-      })
-      .withFailureHandler((err) => {
-        btn.disabled = false;
-        btn.textContent = "Masuk";
-        errBox.textContent = "Terjadi kendala: " + (err.message || err);
-        errBox.style.display = "block";
-      })
-      .verifyLogin(u, p);
+    try {
+      const res = await call(
+        "verifyLogin",
+        document.getElementById("loginUsername").value,
+        document.getElementById("loginPassword").value
+      );
+      if (!res.success) {
+        errBox.textContent = res.message;
+        errBox.hidden = false;
+        return;
+      }
+      storeSession({ token: res.token, user: res.user, canWrite: res.canWrite });
+      closeLoginModal();
+      updateAuthUI();
+      toast("Selamat datang, " + (res.user.nama || res.user.username) + ".", "success");
+      if (res.canWrite) openPage("input");
+      else toast("Akun Anda hanya bisa melihat data.", "error");
+    } catch (err) {
+      errBox.textContent = "Terjadi kendala koneksi. Coba lagi.";
+      errBox.hidden = false;
+      console.error(err);
+    } finally {
+      btn.disabled = false;
+      btn.textContent = "Masuk";
+    }
+  }
+
+  function handleSessionExpired(err) {
+    const message = String((err && err.message) || err || "");
+    if (/sesi login sudah berakhir/i.test(message)) {
+      storeSession(null);
+      updateAuthUI();
+      openLoginModal();
+      toast("Sesi login berakhir. Silakan login kembali.", "error");
+      return true;
+    }
+    return false;
   }
 
   /* =========================
-     FORM INPUT & SEARCH SUBSEKTOR
+     FORM INPUT
   ========================= */
   function onTargetTabelChange() {
     const target = document.getElementById("inputTarget").value;
-    const groupSubsektor = document.getElementById("groupSubsektor");
-    const labelNilai = document.getElementById("labelNilai");
-    const helpText = document.getElementById("nilaiHelpText");
+    const isSub = target === "DATA_SUBSEKTOR";
 
     populateSektorOptions();
+    document.getElementById("groupSubsektor").hidden = !isSub;
+    text("stepNilaiNum", isSub ? "4" : "3");
+    if (!isSub) clearSubsektorSelection();
 
-    if (target === "DATA_SUBSEKTOR") {
-      groupSubsektor.style.display = "block";
-      updateAvailableSubsektors();
-    } else {
-      groupSubsektor.style.display = "none";
-      clearSubsektorSelection();
-    }
-
-    if (target === "DATA_NASIONAL") {
-      labelNilai.textContent = "Nilai Emisi (kt CO₂e)";
-      helpText.textContent = "Satuan emisi nasional dalam kiloton (kt CO₂e).";
-    } else {
-      labelNilai.textContent = "Nilai Emisi (Gg CO₂e)";
-      helpText.textContent = "Gunakan nilai negatif untuk serapan/removal (misal: Sektor Kehutanan).";
-    }
+    text(
+      "nilaiHelpText",
+      target === "DATA_NASIONAL"
+        ? "Gunakan koma untuk desimal. Satuan kiloton (kt CO₂e). Beri tanda minus (-) jika FOLU berupa serapan."
+        : "Gunakan koma untuk desimal. Beri tanda minus (-) untuk serapan, misalnya sektor Kehutanan."
+    );
   }
 
   function populateSektorOptions() {
     const target = document.getElementById("inputTarget").value;
-    const sektorSelect = document.getElementById("inputSektor");
-    if (!sektorSelect || !app.masterForm.sektorList) return;
+    const select = document.getElementById("inputSektor");
+    const previous = select.value;
 
-    sektorSelect.innerHTML = "";
+    const list = (app.masterForm.sektorList || []).filter((s) =>
+      target === "DATA_NASIONAL" ? s.kode !== "KEHUTANAN" : s.kode !== "FOLU"
+    );
 
-    const filteredSektor = app.masterForm.sektorList.filter((s) => {
-      if (target === "DATA_NASIONAL") return s.kode !== "KEHUTANAN";
-      return s.kode !== "FOLU";
-    });
+    populateSelect(
+      "inputSektor",
+      list.map((s) => ({ value: s.kode, label: `${sectorInfo(s.kode).icon} ${s.nama || sectorInfo(s.kode).label}` })),
+      list.some((s) => s.kode === previous) ? previous : list.length ? list[0].kode : null
+    );
 
-    filteredSektor.forEach((s) => {
-      const opt = document.createElement("option");
-      opt.value = s.kode;
-      opt.dataset.sektorId = s.sektorId;
-      opt.textContent = `${s.kode} — ${s.nama}`;
-      sektorSelect.appendChild(opt);
-    });
-
-    if (target === "DATA_SUBSEKTOR") {
-      updateAvailableSubsektors();
-    }
+    if (target === "DATA_SUBSEKTOR") updateAvailableSubsektors();
   }
 
   function onSektorChange() {
-    const target = document.getElementById("inputTarget").value;
-    if (target === "DATA_SUBSEKTOR") {
-      updateAvailableSubsektors();
-    }
+    if (document.getElementById("inputTarget").value === "DATA_SUBSEKTOR") updateAvailableSubsektors();
   }
 
   function updateAvailableSubsektors() {
     const sektor = document.getElementById("inputSektor").value;
     clearSubsektorSelection();
-    app.activeSubsektors = app.masterForm.subsektorList.filter(
-      (k) => k.sektor === sektor
-    );
+    app.activeSubsektors = (app.masterForm.subsektorList || []).filter((k) => k.sektor === sektor);
     renderSubsektorOptions(app.activeSubsektors);
   }
 
@@ -204,15 +1111,18 @@
     const container = document.getElementById("subsektorOptionsList");
     container.innerHTML = "";
 
-    if (items.length === 0) {
-      container.innerHTML = '<div class="search-option-empty">Tidak ada subsektor untuk sektor ini</div>';
+    if (!items.length) {
+      container.innerHTML = '<div class="search-option-empty">Tidak ada subsektor yang cocok.</div>';
       return;
     }
 
     items.forEach((item) => {
       const div = document.createElement("div");
       div.className = "search-option-item";
-      div.textContent = `${item.subsektorId} — ${item.nama}`;
+      const code = document.createElement("small");
+      code.textContent = item.subsektorId;
+      div.appendChild(code);
+      div.appendChild(document.createTextNode(item.nama));
       div.onclick = () => selectSubsektor(item);
       container.appendChild(div);
     });
@@ -220,893 +1130,182 @@
 
   function filterSubsektorOptions() {
     const query = document.getElementById("subsektorSearchInput").value.toLowerCase();
-    const filtered = app.activeSubsektors.filter(
-      (s) => s.nama.toLowerCase().includes(query) || s.subsektorId.toLowerCase().includes(query)
+    document.getElementById("selectedSubsektorId").value = "";
+    renderSubsektorOptions(
+      app.activeSubsektors.filter((s) => s.nama.toLowerCase().includes(query) || s.subsektorId.toLowerCase().includes(query))
     );
-    renderSubsektorOptions(filtered);
     openSubsektorDropdown();
   }
 
   function openSubsektorDropdown() {
-    document.getElementById("subsektorOptionsList").style.display = "block";
+    document.getElementById("subsektorOptionsList").hidden = false;
   }
 
   function selectSubsektor(item) {
     document.getElementById("subsektorSearchInput").value = `${item.subsektorId} — ${item.nama}`;
     document.getElementById("selectedSubsektorId").value = item.subsektorId;
-    document.getElementById("selectedSubsektorName").value = item.nama;
-    document.getElementById("subsektorOptionsList").style.display = "none";
+    document.getElementById("subsektorOptionsList").hidden = true;
   }
 
   function clearSubsektorSelection() {
     document.getElementById("subsektorSearchInput").value = "";
     document.getElementById("selectedSubsektorId").value = "";
-    document.getElementById("selectedSubsektorName").value = "";
   }
 
   document.addEventListener("click", (e) => {
     const wrapper = document.querySelector(".searchable-select-wrapper");
     if (wrapper && !wrapper.contains(e.target)) {
-      const list = document.getElementById("subsektorOptionsList");
-      if (list) list.style.display = "none";
+      document.getElementById("subsektorOptionsList").hidden = true;
     }
   });
 
-  function handleFormSubmit(e) {
-    e.preventDefault();
-    if (!app.currentUser) {
-      alert("Silakan login terlebih dahulu.");
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape") {
+      closeLoginModal();
+      closeGuide();
+    }
+  });
+
+  /** Mengubah teks angka gaya Indonesia ("1.234,56") menjadi format yang dipahami server. */
+  function normalizeNumberInput(raw) {
+    let t = String(raw || "").trim().replace(/\s/g, "");
+    if (!t) return null;
+    if (t.includes(",")) t = t.replace(/\./g, "").replace(",", ".");
+    const n = Number(t);
+    return Number.isFinite(n) ? n : null;
+  }
+
+  async function handleFormSubmit(e, overwrite = false) {
+    if (e) e.preventDefault();
+
+    if (!app.session) {
+      toast("Silakan login terlebih dahulu.", "error");
       openLoginModal();
       return;
     }
 
-    const targetTabel = document.getElementById("inputTarget").value;
-    const sektorSelect = document.getElementById("inputSektor");
-    const selectedSektorOpt = sektorSelect.options[sektorSelect.selectedIndex];
+    const target = document.getElementById("inputTarget").value;
+    const tahun = Number(document.getElementById("inputTahun").value);
+    const nilai = normalizeNumberInput(document.getElementById("inputNilai").value);
+    const sektor = document.getElementById("inputSektor").value;
 
-    const payload = {
-      targetTabel: targetTabel,
-      tahun: document.getElementById("inputTahun").value,
-      sektor: selectedSektorOpt.value,
-      sektorId: selectedSektorOpt.dataset.sektorId,
-      nilai: document.getElementById("inputNilai").value,
-    };
+    if (!Number.isInteger(tahun) || tahun < 1990 || tahun > 2100) {
+      toast("Isi tahun dengan benar (1990–2100).", "error");
+      return document.getElementById("inputTahun").focus();
+    }
+    if (!sektor) return toast("Pilih sektor terlebih dahulu.", "error");
+    if (nilai === null) {
+      toast("Nilai emisi harus berupa angka, contoh: 1234,56", "error");
+      return document.getElementById("inputNilai").focus();
+    }
 
-    if (targetTabel === "DATA_SUBSEKTOR") {
-      const subId = document.getElementById("selectedSubsektorId").value;
-      const subName = document.getElementById("selectedSubsektorName").value;
+    const payload = { targetTabel: target, tahun, sektor, nilai, overwrite };
 
-      if (!subId || !subName) {
-        alert("Pilih subsektor dari daftar pencarian.");
-        document.getElementById("subsektorSearchInput").focus();
-        return;
+    if (target === "DATA_SUBSEKTOR") {
+      payload.subsektorId = document.getElementById("selectedSubsektorId").value;
+      if (!payload.subsektorId) {
+        toast("Pilih subsektor dari daftar pencarian.", "error");
+        return document.getElementById("subsektorSearchInput").focus();
       }
-
-      payload.subsektorId = subId;
-      payload.subsektor = subName;
     }
 
     const btn = document.getElementById("btnSubmitForm");
     btn.disabled = true;
-    btn.textContent = "Menyimpan...";
+    btn.textContent = "Menyimpan…";
 
-    google.script.run
-      .withSuccessHandler((res) => {
-        btn.disabled = false;
-        btn.textContent = "Simpan Data";
-        alert(res.message);
-        document.getElementById("inputNilai").value = "";
-        if (targetTabel === "DATA_SUBSEKTOR") {
-          clearSubsektorSelection();
+    try {
+      const res = await call("saveEmissionData", payload, app.session.token);
+
+      if (res.duplicate) {
+        const ok = confirm(
+          `Data ${sectorInfo(sektor).label} tahun ${tahun} sudah ada dengan nilai ${formatNumber(res.existingValue)} kt CO₂e.\n\n` +
+          `Ganti dengan nilai baru ${formatNumber(nilai)} kt CO₂e?`
+        );
+        if (ok) {
+          btn.disabled = false;
+          return await handleFormSubmit(null, true);
         }
-      })
-      .withFailureHandler((err) => {
-        btn.disabled = false;
-        btn.textContent = "Simpan Data";
-        handleError(err);
-      })
-      .saveEmissionData(payload, app.currentUser);
+        toast("Data tidak diubah.");
+        return;
+      }
+
+      toast(res.message, "success");
+      document.getElementById("inputNilai").value = "";
+      if (target === "DATA_SUBSEKTOR") clearSubsektorSelection();
+      await refreshAfterSave();
+    } catch (err) {
+      if (!handleSessionExpired(err)) handleError(err);
+    } finally {
+      btn.disabled = false;
+      btn.textContent = "Simpan Data";
+    }
+  }
+
+  async function refreshAfterSave() {
+    app.cache = {};
+    app.current = {};
+    try {
+      applyInitialData(await call("getInitialData"));
+    } catch (err) {
+      console.error(err);
+    }
   }
 
   /* =========================
-     FILTER & NAVIGASI
+     PANDUAN
   ========================= */
-  function setupFilters() {
-    populateSelect("globalYear", app.years, app.year);
-    populateSelect("categoryYear", app.years, app.year);
-    populateSelect("categorySector", app.sectors, app.sectors[0]);
-
-    const yearsAscending = [...app.years].sort((a, b) => a - b);
-    populateSelect("trendStartYear", yearsAscending, yearsAscending[0]);
-    populateSelect(
-      "trendEndYear",
-      yearsAscending,
-      yearsAscending[yearsAscending.length - 1]
-    );
+  function renderGuideSectors() {
+    const codes = ["ENERGI", "IPPU", "PERTANIAN", "KEHUTANAN", "LIMBAH"];
+    document.getElementById("guideSectors").innerHTML = codes
+      .map((c) => {
+        const info = sectorInfo(c);
+        return `<span class="sector-name" style="margin-bottom:4px"><span class="sector-dot" style="background:${info.color}"></span>${escapeHtml(info.label)}</span>`;
+      })
+      .join("") + "Kelompok sumber emisi. Arahkan ke halaman <b>Rincian per Sektor</b> untuk penjelasan tiap sektor.";
   }
 
-  function populateSelect(id, values, selected) {
-    const element = document.getElementById(id);
-    if (!element) return;
-    element.innerHTML = "";
-
-    values.forEach((value) => {
-      const option = document.createElement("option");
-      option.value = value;
-      option.textContent = value;
-      option.selected = String(value) === String(selected);
-      element.appendChild(option);
-    });
+  function openGuide() {
+    document.getElementById("guideModal").hidden = false;
   }
 
-  function openPage(page, button) {
-    app.page = page;
-
-    document.querySelectorAll(".page").forEach((element) => {
-      element.classList.remove("active");
-    });
-
-    const targetPage = document.getElementById("page-" + page);
-    if (targetPage) {
-      targetPage.classList.add("active");
-    }
-
-    document.querySelectorAll(".nav-item").forEach((element) => {
-      element.classList.remove("active");
-    });
-
-    if (button) {
-      button.classList.add("active");
-    }
-
-    updateHeroYearFilter();
-
-    switch (page) {
-      case "summary":
-        loadSummary();
-        break;
-      case "trend":
-        loadTrendPage();
-        break;
-      case "national":
-        loadNationalPage();
-        break;
-      case "sector":
-        document.getElementById("categoryYear").value = app.year;
-        loadCategoryPage();
-        break;
-      case "forestry":
-        loadForestryPage();
-        break;
-    }
-  }
-
-  function globalYearChanged() {
-    app.year = Number(document.getElementById("globalYear").value);
-    document.getElementById("categoryYear").value = app.year;
-
-    if (app.page === "summary") loadSummary();
-    if (app.page === "sector") loadCategoryPage();
-    if (app.page === "forestry") loadForestryPage();
+  function closeGuide() {
+    document.getElementById("guideModal").hidden = true;
   }
 
   /* =========================
-     HALAMAN: SUMMARY
+     FORMAT ANGKA (gaya Indonesia)
   ========================= */
-  function loadSummary() {
-    showLoading();
-
-    google.script.run
-      .withSuccessHandler((data) => {
-        app.summary = data;
-        renderSummary(data);
-        hideLoading();
-      })
-      .withFailureHandler(handleError)
-      .getSummaryData(app.year);
+  function formatID(value, decimals = 2) {
+    if (value === null || value === undefined || value === "" || !Number.isFinite(Number(value))) return "-";
+    return new Intl.NumberFormat("id-ID", { minimumFractionDigits: decimals, maximumFractionDigits: decimals }).format(Number(value));
   }
 
-  function renderSummary(data) {
-    text("summaryTotal", formatNumber(data.total));
-    text("summarySectorCount", data.sectorCount);
-
-    if (data.largestSector) {
-      text("summaryLargest", data.largestSector.sektor);
-      text("summaryLargestValue", formatNumber(data.largestSector.nilai) + " Gg CO₂e");
-
-      const percent = data.total !== 0 ? (data.largestSector.nilai / data.total) * 100 : 0;
-      text("summaryLargestPercent", formatPercent(percent) + " dari total");
-    }
-
-    renderChange(data);
-    renderSummaryBar(data);
-    renderSectorList(data);
-    renderSummaryTrend(data);
-    renderSummaryInsights(data);
-  }
-
-  function renderChange(data) {
-    const change = data.changePercent;
-    if (change === null) {
-      text("summaryChangeValue", "-");
-      text("summaryChange", "Belum ada tahun pembanding");
-      return;
-    }
-
-    const abs = Math.abs(change);
-    const value = (change > 0 ? "+" : "-") + formatPercent(abs);
-    text("summaryChangeValue", value);
-
-    const element = document.getElementById("summaryChangeValue");
-    element.className = "kpi-value " + (change > 0 ? "up" : "down");
-
-    document.getElementById("summaryChange").innerHTML =
-      change > 0
-        ? '<span class="up">▲ meningkat</span> dibanding ' + data.previousYear
-        : '<span class="down">▼ menurun</span> dibanding ' + data.previousYear;
-  }
-
-  function renderSummaryBar(data) {
-    text("summaryBarSubtitle", "Tahun " + data.year + " • Gg CO₂e");
-    const table = new google.visualization.DataTable();
-    table.addColumn("string", "Sektor");
-    table.addColumn("number", "Emisi");
-
-    data.sectors.forEach((item) => {
-      table.addRow([item.sektor, item.nilai]);
-    });
-
-    const chart = new google.visualization.BarChart(document.getElementById("summaryBarChart"));
-    chart.draw(table, barOptions());
-  }
-
-  function renderSectorList(data) {
-    const container = document.getElementById("summarySectorList");
-    container.innerHTML = data.sectors
-      .map((item) => {
-        let meta = "";
-        if (item.nilai < 0) {
-          meta = "Serapan / removal";
-        } else {
-          const percent = data.total !== 0 ? (item.nilai / data.total) * 100 : 0;
-          meta = formatPercent(percent) + " dari total";
-        }
-
-        return `
-          <div class="sector-item">
-            <div class="sector-name">${escapeHtml(item.sektor)}</div>
-            <div class="sector-value">${formatNumber(item.nilai)}</div>
-            <div class="sector-meta">${meta}</div>
-          </div>
-        `;
-      })
-      .join("");
-  }
-
-  function renderSummaryTrend(data) {
-    const table = new google.visualization.DataTable();
-    table.addColumn("number", "Tahun");
-    table.addColumn("number", "Total Emisi");
-
-    data.totalTrend.forEach((item) => {
-      table.addRow([item.tahun, item.nilai]);
-    });
-
-    const chart = new google.visualization.LineChart(document.getElementById("summaryTrendChart"));
-    chart.draw(table, lineOptions("Total Emisi"));
-  }
-
-  function renderSummaryInsights(data) {
-    const insights = [];
-
-    if (data.largestSector) {
-      const percent = data.total !== 0 ? (data.largestSector.nilai / data.total) * 100 : 0;
-      insights.push(`
-        <strong>${escapeHtml(data.largestSector.sektor)}</strong> merupakan sektor dengan emisi terbesar pada tahun ${data.year}, yaitu <strong>${formatNumber(data.largestSector.nilai)} Gg CO₂e</strong> (${formatPercent(percent)}).
-      `);
-    }
-
-    if (data.changePercent !== null) {
-      insights.push(`
-        Total emisi <strong>${data.changePercent > 0 ? "meningkat" : "menurun"}</strong> sebesar <strong>${formatPercent(Math.abs(data.changePercent))}</strong> dibanding tahun ${data.previousYear}.
-      `);
-    }
-
-    const forestry = data.sectors.find((item) => item.sektor.toUpperCase() === "KEHUTANAN");
-    if (forestry && forestry.nilai < 0) {
-      insights.push(`
-        Sektor <strong>Kehutanan</strong> mencatat <strong>${formatNumber(forestry.nilai)} Gg CO₂e</strong>, yang menunjukkan serapan/removal GRK.
-      `);
-    }
-
-    document.getElementById("summaryInsights").innerHTML = insights
-      .map((item) => `<div class="insight">${item}</div>`)
-      .join("");
-  }
-
-  /* =========================
-     HALAMAN: TREND SELURUH SEKTOR
-  ========================= */
-  function loadTrendPage() {
-    showLoading();
-
-    google.script.run
-      .withSuccessHandler((data) => {
-        app.allSectorTrend = data;
-        renderAllSectorTrend();
-        hideLoading();
-      })
-      .withFailureHandler(handleError)
-      .getAllSectorTrend();
-  }
-
-  function renderAllSectorTrend() {
-    const source = app.allSectorTrend;
-    if (!source) return;
-
-    const startElement = document.getElementById("trendStartYear");
-    const endElement = document.getElementById("trendEndYear");
-    if (!startElement || !endElement) return;
-
-    let startYear = Number(startElement.value);
-    let endYear = Number(endElement.value);
-
-    if (startYear > endYear) {
-      const temp = startYear;
-      startYear = endYear;
-      endYear = temp;
-    }
-
-    const filteredData = source.data.filter(
-      (item) => item.tahun >= startYear && item.tahun <= endYear
-    );
-
-    renderAllSectorChart(source.sectors, filteredData);
-    renderAllSectorTable(source.sectors, filteredData);
-  }
-
-  function renderAllSectorChart(sectors, data) {
-    const table = new google.visualization.DataTable();
-    table.addColumn("string", "Tahun");
-
-    sectors.forEach((sector) => {
-      table.addColumn("number", formatSectorName(sector));
-    });
-
-    table.addColumn("number", "Total Emisi GRK");
-
-    data.forEach((item) => {
-      const row = [String(item.tahun)];
-      sectors.forEach((sector) => {
-        row.push(item.values[sector] ?? 0);
-      });
-      row.push(item.total);
-      table.addRow(row);
-    });
-
-    const chart = new google.visualization.ComboChart(
-      document.getElementById("allSectorTrendChart")
-    );
-
-    const totalSeriesIndex = sectors.length;
-    const series = {};
-
-    sectors.forEach((_, index) => {
-      series[index] = { type: "bars" };
-    });
-
-    series[totalSeriesIndex] = {
-      type: "line",
-      targetAxisIndex: 0,
-      lineWidth: 4,
-      pointSize: 7,
-    };
-
-    const options = {
-      backgroundColor: "transparent",
-      height: 500,
-      fontName: "Arial",
-      chartArea: {
-        left: 90,
-        top: 50,
-        right: 35,
-        bottom: 100,
-        width: "86%",
-        height: "72%",
-      },
-      isStacked: false,
-      seriesType: "bars",
-      series,
-      bar: { groupWidth: "72%" },
-      legend: {
-        position: "bottom",
-        alignment: "center",
-        maxLines: 3,
-        textStyle: { fontSize: 11, color: "#526174" },
-      },
-      hAxis: {
-        title: "Tahun",
-        textStyle: { fontSize: 10, color: "#64748b" },
-        titleTextStyle: { color: "#64748b", fontSize: 11 },
-        gridlines: { color: "transparent" },
-      },
-      vAxis: {
-        title: "Emisi GRK (Gg CO₂e)",
-        baseline: 0,
-        baselineColor: "#94a3b8",
-        gridlines: { color: "#e8edf3" },
-        minorGridlines: { color: "transparent" },
-        textStyle: { color: "#64748b", fontSize: 10 },
-        titleTextStyle: { color: "#526174", fontSize: 11 },
-        format: "#,##0",
-      },
-      tooltip: { textStyle: { fontSize: 12 } },
-      focusTarget: "category",
-    };
-
-    chart.draw(table, options);
-  }
-
-  function renderAllSectorTable(sectors, data) {
-    const head = document.getElementById("allSectorTableHead");
-    const body = document.getElementById("allSectorTableBody");
-
-    head.innerHTML = `
-      <tr>
-        <th class="matrix-sector">ITEM</th>
-        ${data.map((item) => `<th class="matrix-year">${item.tahun}</th>`).join("")}
-      </tr>
-    `;
-
-    const sectorRows = sectors
-      .map((sector) => `
-        <tr>
-          <td class="matrix-sector matrix-sector-name">${escapeHtml(formatSectorName(sector))}</td>
-          ${data.map((item) => `
-            <td class="matrix-value ${(item.values[sector] ?? 0) < 0 ? "negative" : ""}">
-              ${formatNumber(item.values[sector] ?? 0)}
-            </td>
-          `).join("")}
-        </tr>
-      `)
-      .join("");
-
-    const totalRow = `
-      <tr class="matrix-total">
-        <td class="matrix-sector">TOTAL EMISI GRK</td>
-        ${data.map((item) => `<td class="matrix-value">${formatNumber(item.total)}</td>`).join("")}
-      </tr>
-    `;
-
-    body.innerHTML = sectorRows + totalRow;
-  }
-
-  /* =========================
-     HALAMAN: NASIONAL
-  ========================= */
-  function loadNationalPage() {
-    if (app.national) {
-      renderNationalPage();
-      return;
-    }
-
-    showLoading();
-
-    google.script.run
-      .withSuccessHandler((data) => {
-        app.national = data;
-        setupNationalFilters(data);
-        renderNationalPage();
-        hideLoading();
-      })
-      .withFailureHandler(handleError)
-      .getNationalEmissionData();
-  }
-
-  function setupNationalFilters(data) {
-    const years = [...data.years].sort((a, b) => a - b);
-    populateSelect("nationalStartYear", years, years[0]);
-    populateSelect("nationalEndYear", years, years[years.length - 1]);
-  }
-
-  function renderNationalPage() {
-    const data = app.national;
-    if (!data) return;
-
-    const startYear = Number(document.getElementById("nationalStartYear").value);
-    const endYear = Number(document.getElementById("nationalEndYear").value);
-
-    const filtered = data.data.filter(
-      (item) => item.tahun >= startYear && item.tahun <= endYear
-    );
-
-    renderNationalKpi(data);
-    renderNationalChart(data.sectors, filtered);
-    renderNationalTable(data.sectors, filtered);
-  }
-
-  function renderNationalKpi(data) {
-    text("nationalTotal", formatNumber(data.latestTotal));
-    text("nationalYear", "Tahun " + data.latestYear);
-    text("nationalSectorCount", data.sectors.length);
-
-    if (data.largestSector) {
-      text("nationalLargestSector", formatSectorName(data.largestSector.sektor));
-      text("nationalLargestValue", formatNumber(data.largestSector.nilai) + " kt CO₂e");
-    }
-
-    if (data.changePercent === null) {
-      text("nationalChange", "-");
-      text("nationalChangeYear", "-");
-      return;
-    }
-
-    const change = data.changePercent;
-    const element = document.getElementById("nationalChange");
-    element.textContent = (change >= 0 ? "+" : "-") + formatPercent(Math.abs(change));
-    element.className = "kpi-value " + (change > 0 ? "up" : "down");
-    text("nationalChangeYear", "dibanding " + data.previousYear);
-  }
-
-  function renderNationalChart(sectors, data) {
-    const table = new google.visualization.DataTable();
-    table.addColumn("string", "Tahun");
-
-    sectors.forEach((sector) => {
-      table.addColumn("number", formatSectorName(sector));
-    });
-
-    table.addColumn("number", "Total");
-
-    data.forEach((item) => {
-      const row = [String(item.tahun)];
-      sectors.forEach((sector) => {
-        row.push(item.values[sector] ?? 0);
-      });
-      row.push(item.total);
-      table.addRow(row);
-    });
-
-    const series = {};
-    sectors.forEach((_, index) => {
-      series[index] = { type: "bars" };
-    });
-
-    series[sectors.length] = {
-      type: "line",
-      lineWidth: 4,
-      pointSize: 6,
-    };
-
-    const chart = new google.visualization.ComboChart(
-      document.getElementById("nationalEmissionChart")
-    );
-
-    chart.draw(table, {
-      backgroundColor: "transparent",
-      seriesType: "bars",
-      isStacked: true,
-      series,
-      chartArea: {
-        left: 100,
-        top: 45,
-        right: 35,
-        bottom: 100,
-        width: "86%",
-        height: "72%",
-      },
-      legend: {
-        position: "bottom",
-        alignment: "center",
-        maxLines: 3,
-        textStyle: { fontSize: 11 },
-      },
-      hAxis: {
-        title: "Tahun",
-        slantedText: true,
-        slantedTextAngle: 90,
-        textStyle: { fontSize: 10 },
-        gridlines: { color: "transparent" },
-      },
-      vAxis: {
-        title: "Emisi GRK (kt CO₂e)",
-        baseline: 0,
-        baselineColor: "#94a3b8",
-        gridlines: { color: "#e7ebf0" },
-        textStyle: { fontSize: 10 },
-        format: "#,##0",
-      },
-      bar: { groupWidth: "65%" },
-      focusTarget: "category",
-    });
-  }
-
-  function renderNationalTable(sectors, data) {
-    const head = document.getElementById("nationalTableHead");
-    const body = document.getElementById("nationalTableBody");
-
-    head.innerHTML = `
-      <tr>
-        <th>Tahun</th>
-        ${sectors.map((sector) => `<th>${escapeHtml(formatSectorName(sector))}</th>`).join("")}
-        <th>TOTAL</th>
-      </tr>
-    `;
-
-    body.innerHTML = data
-      .map((item) => `
-        <tr>
-          <td class="year-cell">${item.tahun}</td>
-          ${sectors.map((sector) => `<td class="number">${formatNumber(item.values[sector] ?? 0)}</td>`).join("")}
-          <td class="number national-total-cell">${formatNumber(item.total)}</td>
-        </tr>
-      `)
-      .join("");
-  }
-
-  /* =========================
-     HALAMAN: ANALISIS SUBSEKTOR
-  ========================= */
-  function loadCategoryPage() {
-    const year = Number(document.getElementById("categoryYear").value);
-    const sector = document.getElementById("categorySector").value;
-
-    showLoading();
-
-    let categoryData = null;
-    let trendData = null;
-    let completed = 0;
-
-    function finish() {
-      completed++;
-      if (completed < 2) return;
-      app.category = categoryData;
-      app.categoryTrend = trendData;
-      renderCategory(categoryData, trendData);
-      hideLoading();
-    }
-
-    google.script.run
-      .withSuccessHandler((data) => {
-        categoryData = data;
-        finish();
-      })
-      .withFailureHandler(handleError)
-      .getCategoryData(year, sector);
-
-    google.script.run
-      .withSuccessHandler((data) => {
-        trendData = data;
-        finish();
-      })
-      .withFailureHandler(handleError)
-      .getCategoryTrend(sector);
-  }
-
-  function renderCategory(data, trend) {
-    text("categoryTotal", formatNumber(data.total));
-    text("categoryCount", data.categoryCount);
-
-    if (data.largestCategory) {
-      text("largestCategory", data.largestCategory.kategori);
-      text("largestCategoryValue", formatNumber(data.largestCategory.nilai) + " Gg CO₂e");
-    }
-
-    text("categoryBarTitle", "Subsektor " + data.sector + " — " + data.year);
-
-    renderCategoryBar(data);
-    renderCategoryTrend(trend);
-    renderCategoryTable(data);
-  }
-
-  function renderCategoryBar(data) {
-    const table = new google.visualization.DataTable();
-    table.addColumn("string", "Subsektor");
-    table.addColumn("number", "Emisi");
-
-    data.categories.forEach((item) => {
-      table.addRow([item.kategori, item.nilai]);
-    });
-
-    const chart = new google.visualization.BarChart(document.getElementById("categoryBarChart"));
-    chart.draw(table, barOptions());
-  }
-
-  function renderCategoryTrend(trend) {
-    text("categoryTrendTitle", "Tren Subsektor " + trend.sector);
-
-    const table = new google.visualization.DataTable();
-    table.addColumn("number", "Tahun");
-
-    trend.categories.forEach((category) => {
-      table.addColumn("number", category);
-    });
-
-    trend.data.forEach((item) => {
-      const row = [item.tahun];
-      trend.categories.forEach((category) => {
-        row.push(item.values[category] ?? null);
-      });
-      table.addRow(row);
-    });
-
-    const chart = new google.visualization.LineChart(document.getElementById("categoryTrendChart"));
-    chart.draw(table, lineOptions());
-  }
-
-  function renderCategoryTable(data) {
-    document.getElementById("categoryTable").innerHTML = data.categories
-      .map((item) => {
-        const percent = data.total !== 0 ? (item.nilai / data.total) * 100 : 0;
-        return `
-          <tr>
-            <td>${escapeHtml(item.kategori)}</td>
-            <td class="number">${formatNumber(item.nilai)} Gg CO₂e</td>
-            <td>${item.nilai < 0 ? "Removal" : formatPercent(percent)}</td>
-          </tr>
-        `;
-      })
-      .join("");
-  }
-
-  /* =========================
-     HALAMAN: KEHUTANAN
-  ========================= */
-  function loadForestryPage() {
-    showLoading();
-
-    google.script.run
-      .withSuccessHandler((data) => {
-        app.forestry = data;
-        renderForestry(data);
-        hideLoading();
-      })
-      .withFailureHandler(handleError)
-      .getForestryData(app.year);
-  }
-
-  function renderForestry(data) {
-    text("forestryNet", formatNumber(data.netValue));
-    text("forestryRemoval", formatNumber(data.totalRemoval));
-    text("forestryEmission", formatNumber(data.totalEmission));
-
-    renderForestryBar(data);
-    renderForestryList(data);
-    renderForestryTrend(data);
-  }
-
-  function renderForestryBar(data) {
-    const table = new google.visualization.DataTable();
-    table.addColumn("string", "Subsektor");
-    table.addColumn("number", "Nilai");
-
-    data.categories.forEach((item) => {
-      table.addRow([item.kategori, item.nilai]);
-    });
-
-    const chart = new google.visualization.BarChart(document.getElementById("forestryBarChart"));
-    chart.draw(table, barOptions());
-  }
-
-  function renderForestryList(data) {
-    document.getElementById("forestryList").innerHTML = data.categories
-      .map((item) => `
-        <div class="sector-item">
-          <div class="sector-name">${escapeHtml(item.kategori)}</div>
-          <div class="sector-value">${formatNumber(item.nilai)}</div>
-          <div class="sector-meta">${item.nilai < 0 ? "Serapan / removal" : "Emisi"}</div>
-        </div>
-      `)
-      .join("");
-  }
-
-  function renderForestryTrend(data) {
-    const table = new google.visualization.DataTable();
-    table.addColumn("number", "Tahun");
-    table.addColumn("number", "Net Kehutanan");
-
-    data.trend.forEach((item) => {
-      table.addRow([item.tahun, item.nilai]);
-    });
-
-    const chart = new google.visualization.LineChart(document.getElementById("forestryTrendChart"));
-    chart.draw(table, lineOptions("Kehutanan"));
-  }
-
-  /* =========================
-     CHART OPTIONS & FORMATTING
-  ========================= */
-  function barOptions() {
-    return {
-      backgroundColor: "transparent",
-      legend: { position: "none" },
-      chartArea: {
-        left: 165,
-        top: 20,
-        right: 45,
-        bottom: 55,
-        width: "75%",
-        height: "75%",
-      },
-      hAxis: {
-        title: "Gg CO₂e",
-        baselineColor: "#aeb9c5",
-        gridlines: { color: "#edf0f4" },
-        textStyle: { color: "#758397", fontSize: 10 },
-      },
-      vAxis: {
-        textStyle: { color: "#445568", fontSize: 11 },
-      },
-    };
-  }
-
-  function lineOptions() {
-    return {
-      backgroundColor: "transparent",
-      legend: {
-        position: "top",
-        alignment: "start",
-        textStyle: { fontSize: 10 },
-      },
-      chartArea: {
-        left: 75,
-        top: 60,
-        right: 35,
-        bottom: 55,
-        width: "84%",
-        height: "70%",
-      },
-      hAxis: {
-        title: "Tahun",
-        format: "####",
-        gridlines: { color: "transparent" },
-        textStyle: { color: "#758397", fontSize: 10 },
-      },
-      vAxis: {
-        title: "Gg CO₂e",
-        baseline: 0,
-        baselineColor: "#aeb9c5",
-        gridlines: { color: "#edf0f4" },
-        textStyle: { color: "#758397", fontSize: 10 },
-      },
-      lineWidth: 3,
-      pointSize: 4,
-      interpolateNulls: true,
-    };
-  }
-
-  function formatSectorName(value) {
-    const sector = String(value || "").trim().toUpperCase();
-    const names = {
-      ENERGI: "Energi",
-      IPPU: "IPPU",
-      PERTANIAN: "Pertanian",
-      KEHUTANAN: "Kehutanan",
-      FOLU: "FOLU",
-      LIMBAH: "Limbah",
-    };
-    return names[sector] || sector;
-  }
-
-  function formatNumber(value) {
-    return new Intl.NumberFormat("id-ID", {
-      minimumFractionDigits: 2,
-      maximumFractionDigits: 2,
-    }).format(Number(value) || 0);
+  function formatNumber(value, decimals = 2) {
+    return formatID(value, decimals);
   }
 
   function formatPercent(value) {
-    return (
-      new Intl.NumberFormat("id-ID", {
-        minimumFractionDigits: 1,
-        maximumFractionDigits: 1,
-      }).format(Number(value) || 0) + "%"
-    );
+    const f = formatID(value, 1);
+    return f === "-" ? f : f + "%";
   }
 
+  /** Mengubah kt menjadi kalimat mudah dibaca, contoh 1.234,5 kt → "1,23 juta ton". */
+  function humanTon(kt) {
+    if (kt === null || kt === undefined || !Number.isFinite(Number(kt))) return "-";
+    const ton = Math.abs(Number(kt)) * 1000;
+    const sign = Number(kt) < 0 ? "−" : "";
+    if (ton >= 1e9) return sign + formatID(ton / 1e9, 2) + " miliar ton";
+    if (ton >= 1e6) return sign + formatID(ton / 1e6, 2) + " juta ton";
+    if (ton >= 1e3) return sign + formatID(ton / 1e3, 1) + " ribu ton";
+    return sign + formatID(ton, 0) + " ton";
+  }
+
+  /* =========================
+     UTILITAS
+  ========================= */
   function text(id, value) {
-    const element = document.getElementById(id);
-    if (element) element.textContent = value;
+    const el = document.getElementById(id);
+    if (el) el.textContent = value;
   }
 
   function escapeHtml(value) {
@@ -1118,46 +1317,47 @@
       .replaceAll("'", "&#039;");
   }
 
+  let loadingCount = 0;
+
   function showLoading() {
-    document.getElementById("loading").style.display = "flex";
+    loadingCount++;
+    document.getElementById("loading").hidden = false;
   }
 
   function hideLoading() {
-    document.getElementById("loading").style.display = "none";
+    loadingCount = Math.max(0, loadingCount - 1);
+    if (loadingCount === 0) document.getElementById("loading").hidden = true;
+  }
+
+  function toast(message, type = "") {
+    const el = document.createElement("div");
+    el.className = "toast " + type;
+    el.textContent = message;
+    document.getElementById("toastContainer").appendChild(el);
+    setTimeout(() => el.remove(), type === "error" ? 6000 : 4000);
   }
 
   function handleError(error) {
-    hideLoading();
     console.error(error);
-    alert("Terjadi kesalahan:\n" + (error && error.message ? error.message : error));
+    toast("Terjadi kesalahan: " + (error && error.message ? error.message : error), "error");
   }
 
+  /* =========================
+     RESIZE: GAMBAR ULANG CHART
+  ========================= */
   let resizeTimer;
   window.addEventListener("resize", () => {
     clearTimeout(resizeTimer);
     resizeTimer = setTimeout(() => {
-      if (app.page === "summary" && app.summary) {
-        renderSummaryBar(app.summary);
-        renderSummaryTrend(app.summary);
+      const c = app.current;
+      if (app.page === "summary" && c.summary) renderSummary(c.summary);
+      if (app.page === "trend") {
+        if (c.trend) renderAllSectorTrend();
+        if (c.economic) renderEconomicData(c.economic);
       }
-      if (app.page === "trend" && app.allSectorTrend) {
-        renderAllSectorTrend();
-      }
-      if (app.page === "sector" && app.category && app.categoryTrend) {
-        renderCategory(app.category, app.categoryTrend);
-      }
-      if (app.page === "national" && app.national) {
-        renderNationalPage();
-      }
-      if (app.page === "forestry" && app.forestry) {
-        renderForestry(app.forestry);
-      }
+      if (app.page === "sector" && c.category && c.categoryTrend) renderCategory(c.category, c.categoryTrend);
+      if (app.page === "national" && c.national) renderNationalPage();
+      if (app.page === "forestry" && c.forestry) renderForestry(c.forestry);
     }, 250);
   });
-
-  function updateHeroYearFilter() {
-    const filter = document.getElementById("heroYearFilter");
-    if (!filter) return;
-    filter.style.display = (app.page === "trend" || app.page === "national") ? "none" : "block";
-  }
 </script>

@@ -1,155 +1,152 @@
 <!doctype html>
-<html>
+<html lang="id">
   <head>
     <base target="_top" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta charset="utf-8" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
     <script src="https://www.gstatic.com/charts/loader.js"></script>
     <?!= include('Styles'); ?>
   </head>
 
   <body>
-    <div id="loading" class="loading">
+    <div id="loading" class="loading" role="status" aria-live="polite">
       <div class="loader"></div>
-      <div>Memuat Dashboard GRK...</div>
+      <div>Sedang memuat data emisi…</div>
     </div>
 
+    <div id="toastContainer" class="toast-container" aria-live="polite"></div>
+
     <div class="app">
-      <!-- SIDEBAR -->
+      <!-- ========== NAVIGASI ========== -->
       <aside class="sidebar">
         <div class="brand">
-          <div class="brand-icon">GRK</div>
+          <div class="brand-icon">🌿</div>
           <div>
             <div class="brand-title">GRK Bontang</div>
-            <div class="brand-subtitle">Dashboard Emisi</div>
+            <div class="brand-subtitle">Dashboard Emisi Gas Rumah Kaca</div>
           </div>
         </div>
 
-        <div class="menu-label">DASHBOARD</div>
+        <nav class="nav" aria-label="Menu utama">
+          <div class="menu-label">LIHAT DATA</div>
 
-        <button
-          class="nav-item active"
-          data-page="trend"
-          onclick="openPage('trend', this)"
-        >
-          <span class="nav-icon"> ↗ </span>
-          Tren
-        </button>
+          <button class="nav-item active" data-page="summary" onclick="openPage('summary')">
+            <span class="nav-icon">🏠</span>
+            <span class="nav-text"><span class="nav-title">Ringkasan</span><span class="nav-desc">Gambaran singkat</span></span>
+          </button>
 
-        <button
-          class="nav-item"
-          data-page="national"
-          onclick="openPage('national', this)"
-        >
-          <span class="nav-icon"> ◉ </span>
-          Emisi Nasional
-        </button>
+          <button class="nav-item" data-page="trend" onclick="openPage('trend')">
+            <span class="nav-icon">📈</span>
+            <span class="nav-text"><span class="nav-title">Tren Emisi Bontang</span><span class="nav-desc">Dari tahun ke tahun</span></span>
+          </button>
 
-        <button
-          class="nav-item"
-          data-page="summary"
-          onclick="openPage('summary', this)"
-        >
-          <span class="nav-icon"> ▣ </span>
-          Ringkasan
-        </button>
+          <button class="nav-item" data-page="sector" onclick="openPage('sector')">
+            <span class="nav-icon">🔍</span>
+            <span class="nav-text"><span class="nav-title">Rincian per Sektor</span><span class="nav-desc">Sumber emisi lebih detail</span></span>
+          </button>
 
-        <div class="menu-label">ADMINISTRASI</div>
+          <button class="nav-item" data-page="forestry" onclick="openPage('forestry')">
+            <span class="nav-icon">🌳</span>
+            <span class="nav-text"><span class="nav-title">Hutan &amp; Serapan</span><span class="nav-desc">Karbon yang diserap</span></span>
+          </button>
 
-        <button
-          class="nav-item"
-          id="nav-input"
-          data-page="input"
-          onclick="openPage('input', this)"
-          style="display: none;"
-        >
-          <span class="nav-icon"> ✎ </span>
-          Input Data
-        </button>
+          <button class="nav-item" data-page="national" onclick="openPage('national')">
+            <span class="nav-icon">🇮🇩</span>
+            <span class="nav-text"><span class="nav-title">Pembanding Nasional</span><span class="nav-desc">Emisi Indonesia</span></span>
+          </button>
 
-        <button class="nav-item" id="authBtn" onclick="handleAuthClick()">
-          <span class="nav-icon"> ⇥ </span>
-          <span id="authBtnText">Login</span>
-        </button>
+          <div class="menu-label">LAINNYA</div>
 
-        <div class="menu-label">ANALISIS</div>
+          <button class="nav-item" onclick="openGuide()">
+            <span class="nav-icon">❓</span>
+            <span class="nav-text"><span class="nav-title">Panduan Membaca</span><span class="nav-desc">Arti istilah &amp; angka</span></span>
+          </button>
 
-        <button
-          class="nav-item"
-          data-page="sector"
-          onclick="openPage('sector', this)"
-        >
-          <span class="nav-icon"> ▤ </span>
-          Analisis Subsektor
-        </button>
+          <button class="nav-item" id="nav-input" data-page="input" onclick="openPage('input')" hidden>
+            <span class="nav-icon">✏️</span>
+            <span class="nav-text"><span class="nav-title">Input Data</span><span class="nav-desc">Khusus operator</span></span>
+          </button>
 
-        <button
-          class="nav-item"
-          data-page="forestry"
-          onclick="openPage('forestry', this)"
-        >
-          <span class="nav-icon"> ♣ </span>
-          Kehutanan
-        </button>
+          <button class="nav-item" id="authBtn" onclick="handleAuthClick()">
+            <span class="nav-icon">🔐</span>
+            <span class="nav-text"><span class="nav-title" id="authBtnText">Login Operator</span><span class="nav-desc" id="authBtnDesc">Untuk menambah data</span></span>
+          </button>
+        </nav>
 
         <div class="sidebar-footer">
           Inventarisasi Emisi Gas Rumah Kaca
-          <strong>Kota Bontang</strong>
+          <strong>Pemerintah Kota Bontang</strong>
         </div>
       </aside>
 
-      <!-- MAIN CONTENT -->
+      <!-- ========== KONTEN ========== -->
       <main class="main">
         <header class="hero">
           <div class="hero-content">
             <div class="hero-eyebrow">INVENTARISASI GAS RUMAH KACA</div>
-            <h1>Dashboard Emisi GRK Kota Bontang</h1>
+            <h1>Berapa banyak gas rumah kaca yang dihasilkan Kota Bontang?</h1>
             <p>
-              Monitoring emisi dan serapan Gas Rumah Kaca berdasarkan sektor dan subsektor.
+              Gas rumah kaca (GRK) membuat bumi makin panas. Dashboard ini menunjukkan seberapa banyak GRK
+              yang dilepas dari setiap kegiatan di Bontang, dan seberapa banyak yang diserap kembali oleh hutan.
             </p>
+            <button class="btn-ghost" onclick="openGuide()">❓ Cara membaca dashboard ini</button>
           </div>
 
           <div class="hero-filter" id="heroYearFilter">
-            <label>Tahun</label>
+            <label for="globalYear">Pilih tahun</label>
             <select id="globalYear" onchange="globalYearChanged()"></select>
           </div>
         </header>
 
         <!-- ========================= -->
-        <!-- PAGE 1: RINGKASAN         -->
+        <!-- RINGKASAN                 -->
         <!-- ========================= -->
-        <section id="page-summary" class="page">
+        <section id="page-summary" class="page active">
           <div class="page-heading">
             <div>
-              <h2>Ringkasan Emisi GRK</h2>
-              <p>Gambaran umum emisi dan serapan GRK Kota Bontang.</p>
+              <h2>Ringkasan Tahun <span id="summaryYearLabel">-</span></h2>
+              <p>Gambaran singkat jumlah gas rumah kaca yang dilepas dan diserap Kota Bontang.</p>
+            </div>
+          </div>
+
+          <div class="explain-box">
+            <span class="explain-icon">💡</span>
+            <div>
+              <strong>Cara membaca angka:</strong> satuan <b>kt CO₂e</b> artinya <b>ribu ton</b> gas rumah kaca
+              (disetarakan dengan karbon dioksida). Angka <b>positif</b> berarti gas dilepas ke udara,
+              angka <b>negatif</b> (hijau) berarti gas diserap, misalnya oleh hutan.
             </div>
           </div>
 
           <div class="kpi-grid">
-            <div class="card kpi">
-              <div class="kpi-label">TOTAL EMISI GRK</div>
+            <div class="card kpi kpi-accent-blue">
+              <div class="kpi-top"><span class="kpi-icon">🌫️</span><span class="kpi-label">Total emisi bersih</span></div>
               <div class="kpi-value" id="summaryTotal">-</div>
-              <div class="kpi-unit">Gg CO₂e</div>
-              <div class="kpi-footer" id="summaryChange"></div>
+              <div class="kpi-unit">kt CO₂e</div>
+              <div class="kpi-human" id="summaryTotalHuman"></div>
+              <div class="kpi-footer">Seluruh emisi dikurangi serapan hutan</div>
             </div>
 
-            <div class="card kpi">
-              <div class="kpi-label">SEKTOR TERBESAR</div>
+            <div class="card kpi kpi-accent-amber">
+              <div class="kpi-top"><span class="kpi-icon">🏆</span><span class="kpi-label">Penyumbang terbesar</span></div>
               <div class="kpi-value text" id="summaryLargest">-</div>
               <div class="kpi-unit" id="summaryLargestValue">-</div>
               <div class="kpi-footer" id="summaryLargestPercent"></div>
             </div>
 
-            <div class="card kpi">
-              <div class="kpi-label">JUMLAH SEKTOR</div>
-              <div class="kpi-value" id="summarySectorCount">-</div>
-              <div class="kpi-unit">sektor inventarisasi</div>
+            <div class="card kpi kpi-accent-slate">
+              <div class="kpi-top"><span class="kpi-icon">📊</span><span class="kpi-label">Dibanding tahun lalu</span></div>
+              <div class="kpi-value" id="summaryChangeValue">-</div>
+              <div class="kpi-unit" id="summaryChangeUnit">perubahan total emisi</div>
+              <div class="kpi-footer" id="summaryChange"></div>
             </div>
 
-            <div class="card kpi">
-              <div class="kpi-label">PERUBAHAN TAHUNAN</div>
-              <div class="kpi-value" id="summaryChangeValue">-</div>
-              <div class="kpi-unit">dibanding tahun sebelumnya</div>
+            <div class="card kpi kpi-accent-green">
+              <div class="kpi-top"><span class="kpi-icon">🌳</span><span class="kpi-label">Diserap hutan</span></div>
+              <div class="kpi-value removal" id="summaryRemoval">-</div>
+              <div class="kpi-unit">kt CO₂e diserap</div>
+              <div class="kpi-footer" id="summaryRemovalNote"></div>
             </div>
           </div>
 
@@ -157,8 +154,8 @@
             <div class="card chart-card">
               <div class="card-header">
                 <div>
-                  <h3>Emisi Berdasarkan Sektor</h3>
-                  <p id="summaryBarSubtitle"></p>
+                  <h3>Emisi tiap sektor</h3>
+                  <p id="summaryBarSubtitle">Batang lebih panjang = emisi lebih besar</p>
                 </div>
               </div>
               <div id="summaryBarChart" class="chart"></div>
@@ -167,8 +164,8 @@
             <div class="card">
               <div class="card-header">
                 <div>
-                  <h3>Ringkasan Sektor</h3>
-                  <p>Kontribusi berdasarkan sektor</p>
+                  <h3>Porsi tiap sektor</h3>
+                  <p>Persentase dari seluruh emisi (sebelum dikurangi serapan)</p>
                 </div>
               </div>
               <div id="summarySectorList" class="sector-list"></div>
@@ -179,8 +176,8 @@
             <div class="card chart-card">
               <div class="card-header">
                 <div>
-                  <h3>Tren Total Emisi GRK</h3>
-                  <p>Perkembangan total emisi dari tahun ke tahun</p>
+                  <h3>Perkembangan total emisi</h3>
+                  <p>Garis naik = emisi bertambah, garis turun = emisi berkurang</p>
                 </div>
               </div>
               <div id="summaryTrendChart" class="chart"></div>
@@ -189,8 +186,8 @@
             <div class="card">
               <div class="card-header">
                 <div>
-                  <h3>Insight Utama</h3>
-                  <p>Ringkasan kondisi tahun terpilih</p>
+                  <h3>Kesimpulan singkat</h3>
+                  <p>Poin penting tahun terpilih</p>
                 </div>
               </div>
               <div id="summaryInsights"></div>
@@ -199,171 +196,183 @@
         </section>
 
         <!-- ========================= -->
-        <!-- PAGE 2: TREND             -->
+        <!-- TREN EMISI BONTANG        -->
         <!-- ========================= -->
-        <section id="page-trend" class="page active">
+        <section id="page-trend" class="page">
           <div class="page-heading">
             <div>
-              <h2>Tren Emisi GRK</h2>
-              <p>Perbandingan tingkat emisi seluruh sektor dari tahun ke tahun.</p>
+              <h2>Tren Emisi Kota Bontang</h2>
+              <p>Bandingkan emisi setiap sektor dari tahun ke tahun.</p>
             </div>
 
             <div class="filter-group">
               <div class="filter-card">
-                <label>Tahun Awal</label>
+                <label for="trendStartYear">Dari tahun</label>
                 <select id="trendStartYear" onchange="renderAllSectorTrend()"></select>
               </div>
               <div class="filter-card">
-                <label>Tahun Akhir</label>
+                <label for="trendEndYear">Sampai tahun</label>
                 <select id="trendEndYear" onchange="renderAllSectorTrend()"></select>
               </div>
             </div>
           </div>
 
-          <div class="card chart-card trend-main-card">
+          <div id="trendInsights" class="insight-strip"></div>
+
+          <div class="card chart-card">
             <div class="card-header">
               <div>
-                <h3>Emisi Sektor ENERGI, IPPU, PERTANIAN, KEHUTANAN & LIMBAH</h3>
-                <p>Gg CO₂e</p>
+                <h3>Emisi per sektor dan totalnya</h3>
+                <p>Satuan: kt CO₂e (ribu ton)</p>
               </div>
             </div>
             <div id="allSectorTrendChart" class="all-sector-chart"></div>
-          </div>
-
-          <div class="trend-info">
-            <span>Batang menunjukkan nilai masing-masing sektor.</span>
-            <span>Garis menunjukkan total emisi GRK.</span>
-            <span>Nilai negatif menunjukkan serapan GRK.</span>
+            <div class="chart-legend-help">
+              <span><i class="legend-bar"></i> Batang berwarna = emisi tiap sektor</span>
+              <span><i class="legend-line"></i> Garis gelap = total emisi bersih</span>
+              <span><i class="legend-neg"></i> Batang di bawah garis nol = serapan</span>
+            </div>
           </div>
 
           <div class="card table-card">
             <div class="card-header">
               <div>
-                <h3>Tabel Tingkat Emisi GRK</h3>
-                <p>Nilai emisi per sektor berdasarkan tahun dalam Gg CO₂e</p>
+                <h3>Tabel angka emisi</h3>
+                <p>Geser tabel ke samping untuk melihat tahun lainnya. Angka hijau = serapan.</p>
               </div>
             </div>
-            <div class="table-wrapper emission-matrix-wrapper">
-              <table class="emission-matrix">
+            <div class="table-wrapper">
+              <table class="data-table matrix">
                 <thead id="allSectorTableHead"></thead>
                 <tbody id="allSectorTableBody"></tbody>
               </table>
             </div>
           </div>
-        </section>
 
-        <!-- ========================= -->
-        <!-- PAGE: EMISI NASIONAL      -->
-        <!-- ========================= -->
-        <section id="page-national" class="page">
+          <!-- ===== EKONOMI & INTENSITAS ===== -->
+          <div class="section-divider"></div>
+
           <div class="page-heading">
             <div>
-              <h2>Emisi GRK Nasional</h2>
-              <p>Perkembangan emisi Gas Rumah Kaca Indonesia berdasarkan sektor.</p>
-            </div>
-
-            <div class="filter-group">
-              <div class="filter-card">
-                <label>Tahun Awal</label>
-                <select id="nationalStartYear" onchange="renderNationalPage()"></select>
-              </div>
-              <div class="filter-card">
-                <label>Tahun Akhir</label>
-                <select id="nationalEndYear" onchange="renderNationalPage()"></select>
-              </div>
+              <h2>Emisi dibanding pertumbuhan ekonomi</h2>
+              <p>Apakah ekonomi Bontang tumbuh dengan emisi yang lebih sedikit?</p>
             </div>
           </div>
 
-          <div class="kpi-grid">
-            <div class="card kpi">
-              <div class="kpi-label">TOTAL EMISI NASIONAL</div>
-              <div class="kpi-value" id="nationalTotal">-</div>
-              <div class="kpi-unit">kt CO₂e</div>
-              <div class="kpi-footer" id="nationalYear"></div>
-            </div>
-
-            <div class="card kpi">
-              <div class="kpi-label">SEKTOR TERBESAR</div>
-              <div class="kpi-value text" id="nationalLargestSector">-</div>
-              <div class="kpi-unit" id="nationalLargestValue">-</div>
-            </div>
-
-            <div class="card kpi">
-              <div class="kpi-label">PERUBAHAN TAHUNAN</div>
-              <div class="kpi-value" id="nationalChange">-</div>
-              <div class="kpi-unit" id="nationalChangeYear">-</div>
-            </div>
-
-            <div class="card kpi">
-              <div class="kpi-label">JUMLAH SEKTOR</div>
-              <div class="kpi-value" id="nationalSectorCount">-</div>
-              <div class="kpi-unit">sektor</div>
+          <div class="explain-box">
+            <span class="explain-icon">💡</span>
+            <div>
+              <b>ADHK</b> (PDRB Atas Dasar Harga Konstan) adalah ukuran nilai ekonomi kota yang sudah
+              dihilangkan pengaruh inflasinya. <b>Intensitas GRK</b> = emisi dibagi ADHK, yaitu berapa banyak emisi
+              yang dihasilkan untuk setiap satuan nilai ekonomi. <b>Makin kecil intensitasnya, makin baik</b>,
+              karena ekonomi berjalan dengan emisi yang lebih sedikit.
             </div>
           </div>
 
-          <div class="card chart-card national-chart-card">
-            <div class="card-header">
-              <div>
-                <h3>Tren Emisi GRK Nasional</h3>
-                <p>Emisi berdasarkan sektor dan total tahunan</p>
-              </div>
+          <div class="kpi-grid three">
+            <div class="card kpi kpi-accent-blue">
+              <div class="kpi-top"><span class="kpi-icon">🌫️</span><span class="kpi-label">Total emisi terbaru</span></div>
+              <div class="kpi-value" id="economicTotalEmisi">-</div>
+              <div class="kpi-unit" id="economicTotalEmisiYear">kt CO₂e</div>
+              <div class="kpi-footer" id="economicTotalEmisiChange"></div>
             </div>
-            <div id="nationalEmissionChart" class="national-chart"></div>
+
+            <div class="card kpi kpi-accent-amber">
+              <div class="kpi-top"><span class="kpi-icon">💰</span><span class="kpi-label">Nilai ekonomi (ADHK) terbaru</span></div>
+              <div class="kpi-value" id="economicAdhk">-</div>
+              <div class="kpi-unit" id="economicAdhkYear">-</div>
+              <div class="kpi-footer" id="economicAdhkChange"></div>
+            </div>
+
+            <div class="card kpi kpi-accent-green">
+              <div class="kpi-top"><span class="kpi-icon">⚖️</span><span class="kpi-label">Intensitas GRK terbaru</span></div>
+              <div class="kpi-value" id="economicIntensity">-</div>
+              <div class="kpi-unit">kt CO₂e per ADHK</div>
+              <div class="kpi-footer" id="economicIntensityChange"></div>
+            </div>
+          </div>
+
+          <div class="grid-2">
+            <div class="card chart-card">
+              <div class="card-header">
+                <div>
+                  <h3>Nilai ekonomi (ADHK)</h3>
+                  <p>Naik = ekonomi tumbuh</p>
+                </div>
+              </div>
+              <div id="economicAdhkChart" class="chart"></div>
+            </div>
+
+            <div class="card chart-card">
+              <div class="card-header">
+                <div>
+                  <h3>Intensitas GRK</h3>
+                  <p>Turun = ekonomi makin rendah emisi (baik)</p>
+                </div>
+              </div>
+              <div id="economicIntensityChart" class="chart"></div>
+            </div>
           </div>
 
           <div class="card table-card">
             <div class="card-header">
               <div>
-                <h3>Tabel Emisi GRK Nasional</h3>
-                <p>Data emisi sektoral Indonesia</p>
+                <h3>Tabel emisi dan ekonomi per tahun</h3>
+                <p>Tahun terbaru di bagian atas</p>
               </div>
             </div>
-            <div class="table-wrapper national-table-wrapper">
-              <table class="national-table">
-                <thead id="nationalTableHead"></thead>
-                <tbody id="nationalTableBody"></tbody>
+            <div class="table-wrapper">
+              <table class="data-table">
+                <thead>
+                  <tr>
+                    <th>Tahun</th>
+                    <th class="num">Total Emisi (kt CO₂e)</th>
+                    <th class="num">ADHK</th>
+                    <th class="num">Intensitas GRK</th>
+                  </tr>
+                </thead>
+                <tbody id="economicCombinedTableBody"></tbody>
               </table>
             </div>
           </div>
         </section>
 
         <!-- ========================= -->
-        <!-- PAGE 3: ANALISIS SUBSEKTOR -->
+        <!-- RINCIAN PER SEKTOR        -->
         <!-- ========================= -->
         <section id="page-sector" class="page">
           <div class="page-heading">
             <div>
-              <h2>Analisis Subsektor</h2>
-              <p>Analisis emisi berdasarkan subsektor per sektor.</p>
+              <h2>Rincian per Sektor</h2>
+              <p>Pilih sektor untuk melihat kegiatan apa saja yang menghasilkan emisi.</p>
             </div>
 
             <div class="filter-group">
               <div class="filter-card">
-                <label>Tahun</label>
-                <select id="categoryYear" onchange="loadCategoryPage()"></select>
-              </div>
-              <div class="filter-card">
-                <label>Sektor</label>
+                <label for="categorySector">Sektor</label>
                 <select id="categorySector" onchange="loadCategoryPage()"></select>
               </div>
             </div>
           </div>
 
+          <div id="sectorDescription" class="sector-hero"></div>
+
           <div class="kpi-grid three">
-            <div class="card kpi">
-              <div class="kpi-label">TOTAL SEKTOR</div>
+            <div class="card kpi kpi-accent-blue">
+              <div class="kpi-top"><span class="kpi-icon">Σ</span><span class="kpi-label">Total sektor ini</span></div>
               <div class="kpi-value" id="categoryTotal">-</div>
-              <div class="kpi-unit">Gg CO₂e</div>
+              <div class="kpi-unit">kt CO₂e</div>
+              <div class="kpi-human" id="categoryTotalHuman"></div>
             </div>
 
-            <div class="card kpi">
-              <div class="kpi-label">SUBSEKTOR TERBESAR</div>
-              <div class="kpi-value text" id="largestCategory">-</div>
+            <div class="card kpi kpi-accent-amber">
+              <div class="kpi-top"><span class="kpi-icon">🏆</span><span class="kpi-label">Kegiatan penyumbang terbesar</span></div>
+              <div class="kpi-value text small" id="largestCategory">-</div>
               <div class="kpi-unit" id="largestCategoryValue"></div>
             </div>
 
-            <div class="card kpi">
-              <div class="kpi-label">JUMLAH SUBSEKTOR</div>
+            <div class="card kpi kpi-accent-slate">
+              <div class="kpi-top"><span class="kpi-icon">🧩</span><span class="kpi-label">Jumlah kegiatan tercatat</span></div>
               <div class="kpi-value" id="categoryCount">-</div>
               <div class="kpi-unit">subsektor</div>
             </div>
@@ -372,8 +381,8 @@
           <div class="card chart-card">
             <div class="card-header">
               <div>
-                <h3 id="categoryBarTitle">Emisi Berdasarkan Subsektor</h3>
-                <p>Gg CO₂e</p>
+                <h3 id="categoryBarTitle">Emisi tiap subsektor</h3>
+                <p>Satuan: kt CO₂e (ribu ton)</p>
               </div>
             </div>
             <div id="categoryBarChart" class="large-chart"></div>
@@ -382,8 +391,8 @@
           <div class="card chart-card">
             <div class="card-header">
               <div>
-                <h3 id="categoryTrendTitle">Tren Subsektor</h3>
-                <p>Perkembangan subsektor dari tahun ke tahun</p>
+                <h3 id="categoryTrendTitle">Perkembangan tiap subsektor</h3>
+                <p>Arahkan kursor/ketuk titik untuk melihat angkanya</p>
               </div>
             </div>
             <div id="categoryTrendChart" class="large-chart"></div>
@@ -392,16 +401,16 @@
           <div class="card table-card">
             <div class="card-header">
               <div>
-                <h3>Detail Subsektor</h3>
+                <h3>Tabel rincian subsektor</h3>
               </div>
             </div>
             <div class="table-wrapper">
-              <table>
+              <table class="data-table">
                 <thead>
                   <tr>
                     <th>Subsektor</th>
-                    <th>Nilai Emisi</th>
-                    <th>Kontribusi</th>
+                    <th class="num">Nilai (kt CO₂e)</th>
+                    <th>Porsi dari emisi sektor</th>
                   </tr>
                 </thead>
                 <tbody id="categoryTable"></tbody>
@@ -411,38 +420,44 @@
         </section>
 
         <!-- ========================= -->
-        <!-- PAGE 4: KEHUTANAN         -->
+        <!-- HUTAN & SERAPAN           -->
         <!-- ========================= -->
         <section id="page-forestry" class="page">
           <div class="page-heading">
             <div>
-              <h2>Kehutanan & Serapan GRK</h2>
-              <p>Nilai negatif menunjukkan serapan/removal GRK.</p>
+              <h2>Hutan &amp; Serapan Karbon</h2>
+              <p>Hutan dan lahan hijau menyerap karbon dari udara. Inilah "penyeimbang" emisi kota.</p>
             </div>
           </div>
 
-          <div class="info-banner">
-            <strong>Informasi:</strong>
-            Pada sektor Kehutanan, nilai negatif bukan kesalahan data. Nilai tersebut menunjukkan penyerapan atau removal GRK.
+          <div class="explain-box green">
+            <span class="explain-icon">🌱</span>
+            <div>
+              Di sektor kehutanan, <b>angka negatif bukan kesalahan data</b>. Angka negatif berarti karbon
+              <b>diserap</b> oleh hutan atau lahan. Makin besar angka negatifnya, makin banyak karbon yang diserap.
+            </div>
           </div>
 
           <div class="kpi-grid three">
-            <div class="card kpi">
-              <div class="kpi-label">NET EMISI / SERAPAN</div>
-              <div class="kpi-value" id="forestryNet">-</div>
-              <div class="kpi-unit">Gg CO₂e</div>
-            </div>
-
-            <div class="card kpi">
-              <div class="kpi-label">TOTAL REMOVAL</div>
+            <div class="card kpi kpi-accent-green">
+              <div class="kpi-top"><span class="kpi-icon">🌳</span><span class="kpi-label">Total karbon diserap</span></div>
               <div class="kpi-value removal" id="forestryRemoval">-</div>
-              <div class="kpi-unit">Gg CO₂e diserap</div>
+              <div class="kpi-unit">kt CO₂e diserap</div>
+              <div class="kpi-human" id="forestryRemovalHuman"></div>
             </div>
 
-            <div class="card kpi">
-              <div class="kpi-label">EMISI POSITIF</div>
+            <div class="card kpi kpi-accent-red">
+              <div class="kpi-top"><span class="kpi-icon">🔥</span><span class="kpi-label">Emisi dari hutan &amp; lahan</span></div>
               <div class="kpi-value" id="forestryEmission">-</div>
-              <div class="kpi-unit">Gg CO₂e</div>
+              <div class="kpi-unit">kt CO₂e dilepas</div>
+              <div class="kpi-footer">Misalnya dari pembukaan atau kebakaran lahan</div>
+            </div>
+
+            <div class="card kpi kpi-accent-slate">
+              <div class="kpi-top"><span class="kpi-icon">⚖️</span><span class="kpi-label">Hasil bersih</span></div>
+              <div class="kpi-value" id="forestryNet">-</div>
+              <div class="kpi-unit">kt CO₂e</div>
+              <div class="kpi-footer" id="forestryNetNote"></div>
             </div>
           </div>
 
@@ -450,8 +465,8 @@
             <div class="card chart-card">
               <div class="card-header">
                 <div>
-                  <h3>Emisi & Serapan Berdasarkan Subsektor</h3>
-                  <p>Positif = emisi, negatif = removal</p>
+                  <h3>Serapan dan emisi tiap subsektor</h3>
+                  <p>Hijau = menyerap karbon, merah = melepas karbon</p>
                 </div>
               </div>
               <div id="forestryBarChart" class="chart"></div>
@@ -459,7 +474,10 @@
 
             <div class="card">
               <div class="card-header">
-                <h3>Detail Kehutanan</h3>
+                <div>
+                  <h3>Rincian</h3>
+                  <p id="forestryListSubtitle"></p>
+                </div>
               </div>
               <div id="forestryList" class="sector-list"></div>
             </div>
@@ -468,8 +486,8 @@
           <div class="card chart-card">
             <div class="card-header">
               <div>
-                <h3>Tren Net Emisi / Serapan</h3>
-                <p>Nilai di bawah nol menunjukkan serapan</p>
+                <h3>Perkembangan hasil bersih kehutanan</h3>
+                <p>Garis di bawah nol = hutan menyerap lebih banyak daripada yang dilepas</p>
               </div>
             </div>
             <div id="forestryTrendChart" class="large-chart"></div>
@@ -477,77 +495,145 @@
         </section>
 
         <!-- ========================= -->
-        <!-- PAGE: INPUT DATA          -->
+        <!-- PEMBANDING NASIONAL       -->
+        <!-- ========================= -->
+        <section id="page-national" class="page">
+          <div class="page-heading">
+            <div>
+              <h2>Pembanding: Emisi Indonesia</h2>
+              <p>Emisi gas rumah kaca Indonesia secara keseluruhan, sebagai gambaran besar.</p>
+            </div>
+
+            <div class="filter-group">
+              <div class="filter-card">
+                <label for="nationalStartYear">Dari tahun</label>
+                <select id="nationalStartYear" onchange="renderNationalPage()"></select>
+              </div>
+              <div class="filter-card">
+                <label for="nationalEndYear">Sampai tahun</label>
+                <select id="nationalEndYear" onchange="renderNationalPage()"></select>
+              </div>
+            </div>
+          </div>
+
+          <div class="kpi-grid three">
+            <div class="card kpi kpi-accent-blue">
+              <div class="kpi-top"><span class="kpi-icon">🇮🇩</span><span class="kpi-label">Total emisi nasional</span></div>
+              <div class="kpi-value" id="nationalTotal">-</div>
+              <div class="kpi-unit">kt CO₂e</div>
+              <div class="kpi-human" id="nationalTotalHuman"></div>
+              <div class="kpi-footer" id="nationalYear"></div>
+            </div>
+
+            <div class="card kpi kpi-accent-amber">
+              <div class="kpi-top"><span class="kpi-icon">🏆</span><span class="kpi-label">Penyumbang terbesar</span></div>
+              <div class="kpi-value text" id="nationalLargestSector">-</div>
+              <div class="kpi-unit" id="nationalLargestValue">-</div>
+            </div>
+
+            <div class="card kpi kpi-accent-slate">
+              <div class="kpi-top"><span class="kpi-icon">📊</span><span class="kpi-label">Dibanding tahun sebelumnya</span></div>
+              <div class="kpi-value" id="nationalChange">-</div>
+              <div class="kpi-unit" id="nationalChangeYear">-</div>
+            </div>
+          </div>
+
+          <div class="card chart-card">
+            <div class="card-header">
+              <div>
+                <h3>Tren emisi nasional per sektor</h3>
+                <p>Batang bertumpuk = emisi tiap sektor, garis = total</p>
+              </div>
+            </div>
+            <div id="nationalEmissionChart" class="national-chart"></div>
+          </div>
+
+          <div class="card table-card">
+            <div class="card-header">
+              <div>
+                <h3>Tabel emisi nasional</h3>
+                <p>Satuan: kt CO₂e (ribu ton)</p>
+              </div>
+            </div>
+            <div class="table-wrapper">
+              <table class="data-table">
+                <thead id="nationalTableHead"></thead>
+                <tbody id="nationalTableBody"></tbody>
+              </table>
+            </div>
+          </div>
+        </section>
+
+        <!-- ========================= -->
+        <!-- INPUT DATA                -->
         <!-- ========================= -->
         <section id="page-input" class="page">
           <div class="page-heading">
             <div>
               <h2>Input Data Inventarisasi GRK</h2>
-              <p>Tambah data baru ke sheet DATA_SEKTOR, DATA_SUBSEKTOR, atau DATA_NASIONAL.</p>
+              <p>Tambah atau perbarui data di spreadsheet. Data yang sudah ada tidak akan tergandakan.</p>
             </div>
           </div>
 
           <div class="card form-container">
-            <form id="emissionForm" onsubmit="handleFormSubmit(event)">
-              <div class="form-group">
-                <label>Target Penyimpanan Data</label>
-                <select id="inputTarget" onchange="onTargetTabelChange()" required>
-                  <option value="DATA_SEKTOR">Data Sektor Kota Bontang (DATA_SEKTOR)</option>
-                  <option value="DATA_SUBSEKTOR">Data Subsektor Kota Bontang (DATA_SUBSEKTOR)</option>
-                  <option value="DATA_NASIONAL">Data Emisi GRK Nasional (DATA_NASIONAL)</option>
-                </select>
-              </div>
+            <div class="form-user" id="formUserInfo"></div>
 
-              <div class="form-row">
-                <div class="form-group col">
-                  <label>Tahun</label>
-                  <input
-                    type="number"
-                    id="inputTahun"
-                    min="1990"
-                    max="2100"
-                    placeholder="Contoh: 2025"
-                    required
-                  />
-                </div>
-
-                <div class="form-group col">
-                  <label>Sektor</label>
-                  <select id="inputSektor" onchange="onSektorChange()" required></select>
+            <form id="emissionForm" onsubmit="handleFormSubmit(event)" novalidate>
+              <div class="form-step">
+                <span class="step-num">1</span>
+                <div class="form-group">
+                  <label for="inputTarget">Jenis data</label>
+                  <select id="inputTarget" onchange="onTargetTabelChange()" required>
+                    <option value="DATA_SEKTOR">Kota Bontang — total per sektor</option>
+                    <option value="DATA_SUBSEKTOR">Kota Bontang — rincian per subsektor</option>
+                    <option value="DATA_NASIONAL">Indonesia (nasional) — total per sektor</option>
+                  </select>
                 </div>
               </div>
 
-              <!-- PENCARIAN SUBSEKTOR INTERAKTIF -->
-              <div class="form-group" id="groupSubsektor" style="display: none;">
-                <label>Subsektor (Ketik untuk mencari)</label>
-                <div class="searchable-select-wrapper">
-                  <input
-                    type="text"
-                    id="subsektorSearchInput"
-                    placeholder="Ketik kata kunci subsektor..."
-                    autocomplete="off"
-                    oninput="filterSubsektorOptions()"
-                    onfocus="openSubsektorDropdown()"
-                  />
-                  <input type="hidden" id="selectedSubsektorId" />
-                  <input type="hidden" id="selectedSubsektorName" />
-                  <div class="search-options-list" id="subsektorOptionsList" style="display: none;"></div>
+              <div class="form-step">
+                <span class="step-num">2</span>
+                <div class="form-row">
+                  <div class="form-group col">
+                    <label for="inputTahun">Tahun</label>
+                    <input type="number" id="inputTahun" min="1990" max="2100" step="1" placeholder="Contoh: 2025" required />
+                  </div>
+                  <div class="form-group col">
+                    <label for="inputSektor">Sektor</label>
+                    <select id="inputSektor" onchange="onSektorChange()" required></select>
+                  </div>
                 </div>
-                <small class="form-help">Pilih salah satu subsektor yang sesuai dari opsi di atas.</small>
               </div>
 
-              <div class="form-group">
-                <label id="labelNilai">Nilai Emisi (Gg CO₂e)</label>
-                <input
-                  type="number"
-                  step="any"
-                  id="inputNilai"
-                  placeholder="Gunakan tanda minus (-) untuk serapan/removal"
-                  required
-                />
-                <small class="form-help" id="nilaiHelpText">
-                  Gunakan nilai negatif untuk serapan/removal (misal: Sektor Kehutanan).
-                </small>
+              <div class="form-step" id="groupSubsektor" hidden>
+                <span class="step-num">3</span>
+                <div class="form-group">
+                  <label for="subsektorSearchInput">Subsektor (ketik untuk mencari)</label>
+                  <div class="searchable-select-wrapper">
+                    <input
+                      type="text"
+                      id="subsektorSearchInput"
+                      placeholder="Ketik nama atau kode subsektor…"
+                      autocomplete="off"
+                      oninput="filterSubsektorOptions()"
+                      onfocus="openSubsektorDropdown()"
+                    />
+                    <input type="hidden" id="selectedSubsektorId" />
+                    <div class="search-options-list" id="subsektorOptionsList" hidden></div>
+                  </div>
+                  <small class="form-help">Klik salah satu pilihan di daftar.</small>
+                </div>
+              </div>
+
+              <div class="form-step">
+                <span class="step-num" id="stepNilaiNum">3</span>
+                <div class="form-group">
+                  <label for="inputNilai">Nilai emisi (kt CO₂e)</label>
+                  <input type="text" inputmode="decimal" id="inputNilai" placeholder="Contoh: 1234,56 atau -50,2" required />
+                  <small class="form-help" id="nilaiHelpText">
+                    Gunakan koma untuk desimal. Beri tanda minus (-) untuk serapan, misalnya sektor Kehutanan.
+                  </small>
+                </div>
               </div>
 
               <button type="submit" class="btn-primary" id="btnSubmitForm">Simpan Data</button>
@@ -557,30 +643,76 @@
 
         <footer class="footer">
           <div>Sumber: Inventarisasi Emisi GRK Kota Bontang</div>
-          <div>Dashboard Emisi GRK</div>
+          <div>Dashboard Emisi GRK Kota Bontang</div>
         </footer>
       </main>
     </div>
 
-    <!-- MODAL LOGIN OPERATOR -->
-    <div id="loginModal" class="modal-overlay" style="display: none;">
-      <div class="modal-card">
+    <!-- ========== MODAL LOGIN ========== -->
+    <div id="loginModal" class="modal-overlay" hidden onclick="if (event.target === this) closeLoginModal()">
+      <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="loginTitle">
         <div class="modal-header">
-          <h3>Login Operator GRK</h3>
-          <button type="button" class="btn-close" onclick="closeLoginModal()">✕</button>
+          <h3 id="loginTitle">Login Operator</h3>
+          <button type="button" class="btn-close" onclick="closeLoginModal()" aria-label="Tutup">✕</button>
         </div>
+        <p class="modal-desc">Login hanya diperlukan untuk menambah data. Untuk melihat dashboard tidak perlu login.</p>
         <form onsubmit="handleLoginSubmit(event)">
           <div class="form-group">
-            <label>Username</label>
+            <label for="loginUsername">Username</label>
             <input type="text" id="loginUsername" required autocomplete="username" />
           </div>
           <div class="form-group">
-            <label>Password</label>
+            <label for="loginPassword">Password</label>
             <input type="password" id="loginPassword" required autocomplete="current-password" />
           </div>
-          <div id="loginError" class="login-error" style="display: none;"></div>
+          <div id="loginError" class="login-error" hidden></div>
           <button type="submit" class="btn-primary" id="btnLoginSubmit">Masuk</button>
         </form>
+      </div>
+    </div>
+
+    <!-- ========== MODAL PANDUAN ========== -->
+    <div id="guideModal" class="modal-overlay" hidden onclick="if (event.target === this) closeGuide()">
+      <div class="modal-card wide" role="dialog" aria-modal="true" aria-labelledby="guideTitle">
+        <div class="modal-header">
+          <h3 id="guideTitle">Panduan Membaca Dashboard</h3>
+          <button type="button" class="btn-close" onclick="closeGuide()" aria-label="Tutup">✕</button>
+        </div>
+
+        <div class="guide-body">
+          <div class="guide-item">
+            <h4>🌫️ Gas Rumah Kaca (GRK)</h4>
+            <p>Gas seperti karbon dioksida (CO₂) dan metana yang menahan panas di atmosfer sehingga suhu bumi naik.</p>
+          </div>
+          <div class="guide-item">
+            <h4>📏 kt CO₂e</h4>
+            <p><b>Kiloton setara CO₂</b>. 1 kt = 1.000 ton. Semua jenis gas diubah ke "setara CO₂" agar bisa dijumlahkan.
+              Contoh: 250 kt CO₂e = 250.000 ton.</p>
+          </div>
+          <div class="guide-item">
+            <h4>➕ Emisi &amp; ➖ Serapan</h4>
+            <p>Angka positif = gas <b>dilepas</b> ke udara. Angka negatif (warna hijau) = gas <b>diserap</b>, biasanya oleh hutan.</p>
+          </div>
+          <div class="guide-item">
+            <h4>⚖️ Emisi bersih</h4>
+            <p>Total emisi dari semua sektor setelah dikurangi serapan. Inilah angka utama yang ingin diturunkan.</p>
+          </div>
+          <div class="guide-item">
+            <h4>🏭 Sektor</h4>
+            <p id="guideSectors"></p>
+          </div>
+          <div class="guide-item">
+            <h4>🎨 Warna naik/turun</h4>
+            <p><span class="badge bad">▲ Naik</span> merah berarti kondisinya kurang baik (misalnya emisi bertambah).
+              <span class="badge good">▼ Turun</span> hijau berarti kondisinya membaik.
+              Untuk nilai ekonomi (ADHK) berlaku sebaliknya: naik = baik.</p>
+          </div>
+          <div class="guide-item">
+            <h4>💰 ADHK &amp; Intensitas GRK</h4>
+            <p>ADHK adalah nilai ekonomi kota tanpa pengaruh inflasi. Intensitas = emisi ÷ ADHK.
+              Intensitas yang turun berarti ekonomi tumbuh dengan emisi yang lebih sedikit.</p>
+          </div>
+        </div>
       </div>
     </div>
 
